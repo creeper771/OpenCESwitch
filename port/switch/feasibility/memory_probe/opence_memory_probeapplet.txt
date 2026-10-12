@@ -1,0 +1,41 @@
+OpenCE memory probe: the guest needs 0x80000000-0x8c000000 read/write, and more below 4 GB
+
+== process
+system version 23.0.0, Atmosphere
+applet type 2: applet mode (for example the Album)
+memory: 393 MB in all, 257 MB in use, 136 MB free
+system calls allowed: svcMapMemory yes, svcUnmapMemory yes, svcMapPhysicalMemory yes, svcUnmapPhysicalMemory yes
+
+== regions
+address space 0008000000-8000000000 (524160 MB, code memory): contains the fixed range
+heap          73ff600000-75ff600000 (8192 MB, svcSetHeapSize): does not cover the fixed range
+alias         384dc00000-484dc00000 (65536 MB, svcMapPhysicalMemory): does not cover the fixed range
+stack         2cfaa00000-2d7aa00000 (2048 MB, svcMapMemory): does not cover the fixed range
+alias region extra size: 0 MB
+
+== mappings below 4 GB
+0000000000-0100000000 free           ---
+
+== free space below 4 GB
+address space 3968 MB free, the largest block 3968 MB at 0008000000
+heap          0 MB free
+alias         0 MB free
+stack         0 MB free
+
+== the fixed addresses
+svcMapMemory, window and image, 0080000000-008c000000:
+  map: failed, 0xdc01 (module 1, description 110)
+svcMapMemory, window, 0080000000-0088000000:
+  map: failed, 0xdc01 (module 1, description 110)
+svcMapMemory, image, 0088000000-008c000000:
+  map: failed, 0xdc01 (module 1, description 110)
+svcMapPhysicalMemory, window and image, 0080000000-008c000000:
+  map: failed, 0xfa01 (module 1, description 125)
+
+== a pool below 4 GB
+the stack region has no free space below 4 GB
+
+== verdict
+FIXED ADDRESSES: NO, 0x80000000-0x8c000000 could not be mapped read/write in this launch mode
+POOLS BELOW 4 GB: 0 MB free in the stack region, 0 MB in the alias region; no pool could be mapped
+Run this both from the Album (applet mode) and by holding R while starting a game (title takeover).

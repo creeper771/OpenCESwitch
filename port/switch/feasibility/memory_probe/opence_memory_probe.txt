@@ -1,0 +1,64 @@
+OpenCE memory probe: the guest needs 0x80000000-0x8c000000 read/write, and more below 4 GB
+
+== process
+system version 23.0.0, Atmosphere
+applet type 0: title takeover (application)
+memory: 3285 MB in all, 3281 MB in use, 3 MB free
+system calls allowed: svcMapMemory yes, svcUnmapMemory yes, svcMapPhysicalMemory yes, svcUnmapPhysicalMemory yes
+  svcMapProcessCodeMemory yes, svcUnmapProcessCodeMemory yes, svcSetProcessMemoryPermission yes
+own process handle: given by the loader
+program: sdmc:/switch/opence_memory_probe.nro
+
+== regions
+address space 0008000000-8000000000 (524160 MB, code memory): contains the fixed range
+heap          1683e00000-1883e00000 (8192 MB, svcSetHeapSize): does not cover the fixed range
+alias         6b72600000-7b72600000 (65536 MB, svcMapPhysicalMemory): does not cover the fixed range
+stack         07a6600000-0826600000 (2048 MB, svcMapMemory): does not cover the fixed range
+alias region extra size: 0 MB
+
+== mappings below 4 GB
+0000000000-0100000000 free           ---
+
+== free space below 4 GB
+address space 3968 MB free, the largest block 3968 MB at 0008000000
+heap          0 MB free
+alias         0 MB free
+stack         0 MB free
+
+== the fixed addresses
+svcMapMemory, window and image, 0080000000-008c000000:
+  map: failed, 0xdc01 (module 1, description 110)
+svcMapMemory, window, 0080000000-0088000000:
+  map: failed, 0xdc01 (module 1, description 110)
+svcMapMemory, image, 0088000000-008c000000:
+  map: failed, 0xdc01 (module 1, description 110)
+svcMapPhysicalMemory, window and image, 0080000000-008c000000:
+  map: failed, 0xfa01 (module 1, description 125)
+
+== a pool below 4 GB
+the stack region has no free space below 4 GB
+
+== code mapping in the address space region
+svcMapProcessCodeMemory, window and image, 0080000000-008c000000:
+  map: succeeded
+  read/execute permission on the code page, never made writable: succeeded
+  the code page is mapped as module code (type 0x8)
+  the function placed there returned 0x1234: it ran
+  read/write permission on the other pages: succeeded
+  every read/write page reads back what was written
+  mapped as module data (type 0x9), attributes 0x0
+  file read: 227525 bytes, the same as a read into heap memory
+  the code page read/write again, for unmapping: succeeded
+  unmap: succeeded
+svcMapProcessCodeMemory, pool, 0008000000-000c000000:
+  map: succeeded
+  read/write permission: succeeded
+  every read/write page reads back what was written
+  mapped as module data (type 0x9), attributes 0x0
+  unmap: succeeded
+
+== verdict
+FIXED ADDRESSES: yes, with svcMapProcessCodeMemory (heap memory in the address space region)
+POOLS BELOW 4 GB: 0 MB free in the stack region, 0 MB in the alias region; no pool could be mapped
+CODE MAPPING: 3968 MB free below 4 GB in the address space region; the fixed range mapped read/write, a file read into it worked, code in the image ran; a 64 MB pool was mapped and checked
+Run this both from the Album (applet mode) and by holding R while starting a game (title takeover).
