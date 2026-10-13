@@ -128,6 +128,8 @@ static const struct host_import implemented[] =
 	{"host_gl_fence_frame", (void *)host_gl_fence_frame},
 	{"host_gl_wait_frame", (void *)host_gl_wait_frame},
 	{"host_gl_buffer_write", (void *)host_gl_buffer_write},
+	{"host_gl_persistent_buffer", (void *)host_gl_persistent_buffer},
+	{"host_gl_persistent_write", (void *)host_gl_persistent_write},
 	/* port/linux/src/posix_files.c, as on Android; the functions that take
 	a descriptor translate the guest's first (host_syscall.c) */
 	{"hostposix_stat", (void *)posix_stat},

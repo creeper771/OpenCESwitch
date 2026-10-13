@@ -22,6 +22,7 @@ host_gl_wait_frame and host_gl_buffer_write are the Android host's
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
+#include <GLES2/gl2ext.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,12 +66,13 @@ static EGLContext context = EGL_NO_CONTEXT;
 static EGLConfig config;
 static int window_made;
 /* Mesa's GL thread (port/switch/mesa: built with port/switch/mesa/build_mesa.sh),
-which takes the driver's work off the game's main thread; only if
-sdmc:/switch/opence/glthread exists: as it is, the campaign is slower with it
-(each frame's vertices, about 5 MB, are copied through its queue, which
-fills, and the main thread waited 45% of its time for it) */
+which takes the driver's work off the game's main thread; on unless
+sdmc:/switch/opence/no_glthread exists. (It needs the renderer's persistently
+mapped streaming buffers, host_gl_persistent_buffer: copied through its
+queue, each frame's vertices, about 5 MB, filled it and made the campaign
+slower than without it.) */
 static int glthread;
-#define GLTHREAD_PATH "sdmc:/switch/opence/glthread"
+#define NO_GLTHREAD_PATH "sdmc:/switch/opence/no_glthread"
 /* under the GL thread, glBufferSubData is queued without waiting for the
 thread only below this size (Mesa's MARSHAL_MAX_CMD_SIZE, less its command) */
 #define QUEUED_WRITE_BYTES 8000u
@@ -184,9 +186,9 @@ uint32_t host_sdl_gl_create_context(uint32_t window)
 	if (context != EGL_NO_CONTEXT)
 		return CONTEXT_HANDLE;
 	{
-		FILE *flag = fopen(GLTHREAD_PATH, "r");
+		FILE *flag = fopen(NO_GLTHREAD_PATH, "r");
 
-		glthread = flag != NULL;
+		glthread = flag == NULL;
 		if (flag)
 			fclose(flag);
 		setenv("mesa_glthread", glthread ? "true" : "false", 1);
@@ -392,4 +394,69 @@ void host_gl_buffer_write(uint32_t target, uint32_t offset, uint32_t size, const
 	}
 	memcpy(mapping, data, size);
 	glUnmapBuffer(target);
+}
+
+/* ---------- persistently mapped buffers
+
+The renderer's streaming buffers (d3d8_gl.c), where the extension is there:
+their storage is mapped once, for good, so that each draw's vertices are a
+copy into it rather than a mapping of the buffer, or a glBufferSubData,
+per draw. The renderer only writes ranges the GPU no longer reads (its ring
+of buffers and their fences). */
+#define PERSISTENT_BUFFERS 16
+#define PERSISTENT_ACCESS (GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT)
+
+static struct
+{
+	GLuint name;
+	uint8_t *mapping;
+	uint32_t size;
+} persistent_buffers[PERSISTENT_BUFFERS];
+static int persistent_count;
+
+uint32_t host_gl_persistent_buffer(uint32_t target, uint32_t size)
+{
+	static PFNGLBUFFERSTORAGEEXTPROC buffer_storage;
+	static int checked;
+	GLuint name = 0;
+	void *mapping;
+
+	if (!checked)
+	{
+		checked = 1;
+		if (host_gl_has_extension("GL_EXT_buffer_storage"))
+			buffer_storage = (PFNGLBUFFERSTORAGEEXTPROC)eglGetProcAddress("glBufferStorageEXT");
+	}
+	if (!buffer_storage || persistent_count == PERSISTENT_BUFFERS)
+		return 0;
+	glGenBuffers(1, &name);
+	glBindBuffer(target, name);
+	buffer_storage(target, size, NULL, PERSISTENT_ACCESS);
+	mapping = glMapBufferRange(target, 0, size, PERSISTENT_ACCESS);
+	if (!mapping)
+	{
+		glBindBuffer(target, 0);
+		glDeleteBuffers(1, &name);
+		return 0;
+	}
+	persistent_buffers[persistent_count].name = name;
+	persistent_buffers[persistent_count].mapping = mapping;
+	persistent_buffers[persistent_count].size = size;
+	persistent_count++;
+	return name;
+}
+
+void host_gl_persistent_write(uint32_t buffer, uint32_t offset, uint32_t size, const void *data)
+{
+	int index;
+
+	for (index = 0; index < persistent_count; index++)
+	{
+		if (persistent_buffers[index].name == buffer)
+		{
+			if (offset <= persistent_buffers[index].size && size <= persistent_buffers[index].size - offset)
+				memcpy(persistent_buffers[index].mapping + offset, data, size);
+			return;
+		}
+	}
 }

@@ -43,11 +43,15 @@ makes the game's context, and then writes the renderer's vertices with
 `glBufferSubData` in pieces the GL thread queues without waiting, instead
 of mapping the buffer, which would stop the GL thread each time.
 
-The GL thread is off unless an empty file `sdmc:/switch/opence/glthread`
-exists: as it is, the campaign runs slower with it. Each frame's vertices
-(about 5 MB) are copied through its queue and copied again into the GPU's
-buffer, the queue fills, and the game's main thread waited 45% of its time
-for the GL thread (checked on a Switch, against about 40% of the main
-thread spent in the driver without it).
+The GL thread is on unless an empty file `sdmc:/switch/opence/no_glthread`
+exists. It pays only with the renderer's persistently mapped streaming
+buffers (`host_gl_persistent_buffer`, used by `port/linux/src/d3d8_gl.c`):
+without them each frame's vertices (about 5 MB) went through its queue and
+were copied again into the GPU's buffer, the queue filled, and the game's
+main thread waited 45% of its time for it. With them (checked on a
+Switch), the driver's draw work leaves the main thread, which waits for the
+GL thread or the GPU about 2% of its time; shader compiles still run on the
+main thread, where glthread waits for them.
+
 With the system's `switch-mesa` instead of this one, the GL thread is never
 started, whatever the setting.

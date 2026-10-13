@@ -102,6 +102,8 @@ void host_gl_read_buffer(uint32_t buffer, uint32_t offset, uint32_t size, void *
 void host_gl_fence_frame(uint32_t slot);
 void host_gl_wait_frame(uint32_t slot);
 void host_gl_buffer_write(uint32_t target, uint32_t offset, uint32_t size, const void *data);
+uint32_t host_gl_persistent_buffer(uint32_t target, uint32_t size);
+void host_gl_persistent_write(uint32_t buffer, uint32_t offset, uint32_t size, const void *data);
 
 /* host_memory.c */
 int host_memory_initialize(void);

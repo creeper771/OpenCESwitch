@@ -104,6 +104,13 @@ the GPU's writes to it */
 void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data);
 /* unsynchronized write into the buffer bound to target */
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
+/* a new buffer of size bytes, bound to target, whose storage stays mapped
+for host_gl_persistent_write (GL_EXT_buffer_storage); 0 where there is no
+such thing, the buffer then made as before */
+unsigned int host_gl_persistent_buffer(unsigned int target, unsigned int size);
+/* writes into a buffer of host_gl_persistent_buffer, without a GL call: the
+caller makes sure the GPU no longer reads that range */
+void host_gl_persistent_write(unsigned int buffer, unsigned int offset, unsigned int size, const void *data);
 /* fences the GPU work queued so far as that of ring slot `slot`; waits for
 the GPU to finish the work last fenced for a slot */
 void host_gl_fence_frame(unsigned int slot);

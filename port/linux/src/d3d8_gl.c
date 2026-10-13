@@ -539,6 +539,9 @@ struct gl_device
 	GLuint stream_buffers[STREAM_BUFFER_RING];
 	GLuint index_buffers[STREAM_BUFFER_RING];
 	unsigned long buffer_ring;
+	/* the ring's storage stays mapped (host_gl_persistent_buffer), and draws
+	copy into it with host_gl_persistent_write */
+	BOOL persistent_streams;
 #endif
 	unsigned long stream_offset;
 	GLuint index_buffer;
@@ -1570,15 +1573,38 @@ static void gl_initialize(void)
 	{
 		int ring;
 
-		glGenBuffers(STREAM_BUFFER_RING, device.stream_buffers);
-		glGenBuffers(STREAM_BUFFER_RING, device.index_buffers);
-		for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
+		/* persistently mapped where the host can: each draw's vertices are
+		then a copy into the buffer, with no GL call (a mapping per draw, or
+		on the Switch the copy through Mesa's GL thread, cost more) */
+		device.persistent_streams = TRUE;
+		for (ring = 0; ring < STREAM_BUFFER_RING && device.persistent_streams; ring++)
 		{
-			glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffers[ring]);
-			glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffers[ring]);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+			device.stream_buffers[ring] = host_gl_persistent_buffer(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE);
+			device.index_buffers[ring] = host_gl_persistent_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE);
+			if (!device.stream_buffers[ring] || !device.index_buffers[ring])
+				device.persistent_streams = FALSE;
 		}
+		if (!device.persistent_streams)
+		{
+			for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
+			{
+				if (device.stream_buffers[ring])
+					glDeleteBuffers(1, &device.stream_buffers[ring]);
+				if (device.index_buffers[ring])
+					glDeleteBuffers(1, &device.index_buffers[ring]);
+			}
+			glGenBuffers(STREAM_BUFFER_RING, device.stream_buffers);
+			glGenBuffers(STREAM_BUFFER_RING, device.index_buffers);
+			for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
+			{
+				glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffers[ring]);
+				glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffers[ring]);
+				glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+			}
+		}
+		platform_log("streaming: %s", device.persistent_streams ? "persistently mapped buffers" :
+			"buffers written per draw");
 		device.stream_buffer = device.stream_buffers[0];
 		device.index_buffer = device.index_buffers[0];
 	}
@@ -4274,6 +4300,16 @@ static void stream_reserve(unsigned long size)
 {
 	if (device.stream_offset + size > STREAM_BUFFER_SIZE)
 	{
+#ifdef HALO_GLES
+		/* (persistent storage cannot be orphaned: the GPU finishes every
+		draw from it first; a frame seldom fills it) */
+		if (device.persistent_streams)
+		{
+			glFinish();
+			device.stream_offset = 0;
+			return;
+		}
+#endif
 		/* orphan the buffer and start again */
 		state_array_buffer(device.stream_buffer);
 		glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
@@ -4304,7 +4340,10 @@ static unsigned long stream_upload(const void *data, unsigned long size)
 	offset = device.stream_offset;
 	state_array_buffer(device.stream_buffer);
 #ifdef HALO_GLES
-	host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
+	if (device.persistent_streams)
+		host_gl_persistent_write(device.stream_buffer, (unsigned int)offset, (unsigned int)length, data);
+	else
+		host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
 #else
 	buffer_upload(GL_ARRAY_BUFFER, offset, length, data);
 #endif
@@ -4366,12 +4405,21 @@ static unsigned long index_upload(const void *data, unsigned long size)
 	state_element_array_buffer(device.index_buffer);
 	if (device.index_offset + size > INDEX_BUFFER_SIZE)
 	{
+#ifdef HALO_GLES
+		/* (as stream_reserve) */
+		if (device.persistent_streams)
+			glFinish();
+		else
+#endif
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
 		device.index_offset = 0;
 	}
 	offset = device.index_offset;
 #ifdef HALO_GLES
-	host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
+	if (device.persistent_streams)
+		host_gl_persistent_write(device.index_buffer, (unsigned int)offset, (unsigned int)length, data);
+	else
+		host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)length, data);
 #else
 	buffer_upload(GL_ELEMENT_ARRAY_BUFFER, offset, length, data);
 #endif

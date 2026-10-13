@@ -65,6 +65,23 @@ void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int
 	glBufferSubData((GLenum)target, (GLintptr)offset, (GLsizeiptr)size, data);
 }
 
+/* WebGL has no persistently mapped buffers (GL_EXT_buffer_storage): the
+renderer streams through host_gl_buffer_write */
+unsigned int host_gl_persistent_buffer(unsigned int target, unsigned int size)
+{
+	(void)target;
+	(void)size;
+	return 0;
+}
+
+void host_gl_persistent_write(unsigned int buffer, unsigned int offset, unsigned int size, const void *data)
+{
+	(void)buffer;
+	(void)offset;
+	(void)size;
+	(void)data;
+}
+
 void host_gl_fence_frame(unsigned int slot)
 {
 	(void)slot;
