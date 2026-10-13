@@ -13,6 +13,11 @@ GUEST   := $(ROOT)/build/android/halo_guest.elf
 
 LIBNX   ?= $(DEVKITPRO)/libnx
 PORTLIBS ?= $(DEVKITPRO)/portlibs/switch
+# Mesa built with its GL thread (port/switch/mesa/build_mesa.sh), when there,
+# before the system's switch-mesa
+MESA    := $(OUT)/mesa/install$(DEVKITPRO)/portlibs/switch
+MESA_FLAGS := $(if $(wildcard $(MESA)/lib/libEGL.a),-I$(MESA)/include,)
+MESA_LIBS := $(if $(wildcard $(MESA)/lib/libEGL.a),-L$(MESA)/lib,)
 TOOLS   := $(DEVKITPRO)/tools/bin
 CC      := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-gcc
 # (the link is C++'s: Mesa's shader compiler needs its runtime)
@@ -20,9 +25,9 @@ CXX     := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-g++
 
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS  := -g -O2 -std=gnu11 -Wall -Wextra -ffunction-sections $(ARCH) -D__SWITCH__ \
-	-I. -I$(LIBNX)/include -I$(PORTLIBS)/include -I$(ROOT)/port/android/include
+	-I. -I$(LIBNX)/include $(MESA_FLAGS) -I$(PORTLIBS)/include -I$(ROOT)/port/android/include
 
-LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) -L$(PORTLIBS)/lib -L$(LIBNX)/lib
+LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) $(MESA_LIBS) -L$(PORTLIBS)/lib -L$(LIBNX)/lib
 # switch-mesa: EGL and OpenGL ES on the nouveau driver
 LIBS    := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lnx
 

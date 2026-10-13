@@ -1,0 +1,155 @@
+--- a/src/egl/drivers/switch/egl_switch.c
++++ b/src/egl/drivers/switch/egl_switch.c
+@@ -25,8 +25,11 @@
+  */
+ 
+ #include <errno.h>
++#include <stdbool.h>
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ #include "eglconfig.h"
+ #include "eglcontext.h"
+@@ -345,9 +348,22 @@
+ }
+ 
+ 
++/* the GL thread's calls are done before its context changes, as DRI does
++(dri_unbind_context) */
++static void
++switch_glthread_finish(_EGLContext *ctx)
++{
++    struct switch_egl_context *context = switch_egl_context(ctx);
++
++    if (context && context->stctx && context->stctx->thread_finish)
++        context->stctx->thread_finish(context->stctx);
++}
++
+ static EGLBoolean
+ switch_destroy_surface(_EGLDriver *drv, _EGLDisplay *disp, _EGLSurface *surf)
+ {
++    /* (the GL thread may still draw into it) */
++    switch_glthread_finish(surf ? surf->CurrentContext : NULL);
+     struct switch_egl_surface* surface = switch_egl_surface(surf);
+     CALLED();
+ 
+@@ -449,6 +465,23 @@
+ 
+ // Called from st_api_create_context. This is only ever used for detecting
+ // whether the ST_MANAGER_BROKEN_INVALIDATE workaround is required.
++/* the GL thread's start (st_set_background_context requires it): nothing
++to set up here */
++static void
++switch_st_set_background_context(struct st_context_iface *stctxi,
++                                 struct util_queue_monitoring *queue_info)
++{
++}
++
++/* mesa_glthread=true in the environment, as for DRI's option */
++static bool
++switch_glthread_enabled(void)
++{
++    const char *value = getenv("mesa_glthread");
++
++    return value && (!strcmp(value, "true") || !strcmp(value, "1"));
++}
++
+ static int
+ switch_st_get_param(struct st_manager *stmgr, enum st_manager_param param)
+ {
+@@ -490,6 +523,7 @@
+     }
+ 
+     stmgr->get_param = switch_st_get_param;
++    stmgr->set_background_context = switch_st_set_background_context;
+ 
+     // Create nouveau screen
+     TRACE("Creating nouveau screen\n");
+@@ -607,6 +641,11 @@
+         goto cleanup;
+     }
+ 
++    /* the GL thread, as DRI starts it for mesa_glthread: the application's
++     * GL calls are queued for a thread of their own (switch_glthread_enabled) */
++    if (context->stctx->start_thread && switch_glthread_enabled())
++        context->stctx->start_thread(context->stctx);
++
+     return &context->base;
+ 
+ cleanup:
+@@ -644,6 +683,7 @@
+     _EGLContext *old_ctx;
+     _EGLSurface *old_dsurf, *old_rsurf;
+ 
++    switch_glthread_finish(_eglGetCurrentContext());
+     if (!_eglBindContext(ctx, dsurf, rsurf, &old_ctx, &old_dsurf, &old_rsurf))
+         return EGL_FALSE;
+ 
+@@ -687,6 +727,9 @@
+         return EGL_TRUE;
+     }
+ 
++    /* the GL thread's queued calls are done before the context is flushed
++     * here, on the application's thread (as DRI does: dri_flush) */
++    switch_glthread_finish(surface->base.CurrentContext);
+     TRACE("Flushing context\n");
+     context->stctx->flush(context->stctx, ST_FLUSH_END_OF_FRAME, NULL, NULL, NULL);
+ 
+--- a/src/mesa/main/glthread.c
++++ b/src/mesa/main/glthread.c
+@@ -32,6 +32,9 @@
+  * thread.
+  */
+ 
++#include <stdint.h>
++#include <stdlib.h>
++
+ #include "main/mtypes.h"
+ #include "main/glthread.h"
+ #include "main/glthread_marshal.h"
+@@ -63,11 +66,28 @@
+    batch->used = 0;
+ }
+ 
++#ifdef __SWITCH__
++/* libnx's svcSetThreadCoreMask (switch/kernel/svc.h, not included here) */
++uint32_t svcSetThreadCoreMask(uint32_t handle, int32_t preferred_core, uint64_t affinity_mask);
++#define SWITCH_CURRENT_THREAD 0xFFFF8000u
++#endif
++
+ static void
+ glthread_thread_initialization(void *job, int thread_index)
+ {
+    struct gl_context *ctx = (struct gl_context*)job;
+ 
++#ifdef __SWITCH__
++   /* new threads start on the process's default core, the application's:
++    * the GL thread runs beside it, on core mesa_glthread_core (default 1) */
++   {
++      const char *core = getenv("mesa_glthread_core");
++      int32_t number = core ? atoi(core) : 1;
++
++      if (number >= 0 && number <= 2)
++         svcSetThreadCoreMask(SWITCH_CURRENT_THREAD, number, 1ull << number);
++   }
++#endif
+    ctx->Driver.SetBackgroundContext(ctx, &ctx->GLThread.stats);
+    _glapi_set_context(ctx);
+ }
+--- a/src/mesa/state_tracker/st_manager.c
++++ b/src/mesa/state_tracker/st_manager.c
+@@ -994,10 +994,10 @@
+    st->iface.teximage = st_context_teximage;
+    st->iface.copy = st_context_copy;
+    st->iface.share = st_context_share;
+-#ifndef __SWITCH__
++   /* (devkitPro's Switch patch left these out; its EGL driver now gives
++    * the GL thread what it needs, set_background_context) */
+    st->iface.start_thread = st_start_thread;
+    st->iface.thread_finish = st_thread_finish;
+-#endif
+    st->iface.st_context_private = (void *) smapi;
+    st->iface.cso_context = st->cso_context;
+    st->iface.pipe = st->pipe;

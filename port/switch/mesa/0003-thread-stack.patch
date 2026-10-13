@@ -1,0 +1,66 @@
+--- a/src/util/u_thread.h
++++ b/src/util/u_thread.h
+@@ -33,6 +33,11 @@
+ #include "c11/threads.h"
+ #include "detect_os.h"
+ 
++#ifdef __SWITCH__
++#include <pthread.h>
++#include <stdlib.h>
++#endif
++
+ #ifdef HAVE_PTHREAD
+ #include <signal.h>
+ #ifdef PTHREAD_SETAFFINITY_IN_NP_HEADER
+@@ -48,10 +53,50 @@
+ #define cpu_set_t cpuset_t
+ #endif
+ 
++#ifdef __SWITCH__
++/* A thread made with thrd_create gets libnx's small default stack, taken
++ * from the heap: the GL thread, which runs the whole driver and its GLSL
++ * compiler, ran off its end into the heap. Mesa's threads get their own
++ * size here. */
++#define U_THREAD_SWITCH_STACK_SIZE (4 * 1024 * 1024)
++
++struct u_thread_switch_start {
++   int (*routine)(void *);
++   void *param;
++};
++
++static void *u_thread_switch_main(void *context)
++{
++   struct u_thread_switch_start start = *(struct u_thread_switch_start *)context;
++
++   free(context);
++   return (void *)(intptr_t)start.routine(start.param);
++}
++#endif
++
+ static inline thrd_t u_thread_create(int (*routine)(void *), void *param)
+ {
+    thrd_t thread;
+-#ifdef HAVE_PTHREAD
++#ifdef __SWITCH__
++   pthread_attr_t attributes;
++   struct u_thread_switch_start *start =
++      (struct u_thread_switch_start *)malloc(sizeof(*start));
++   int ret;
++
++   if (!start)
++      return 0;
++   start->routine = routine;
++   start->param = param;
++   pthread_attr_init(&attributes);
++   pthread_attr_setstacksize(&attributes, U_THREAD_SWITCH_STACK_SIZE);
++   ret = pthread_create(&thread, &attributes, u_thread_switch_main, start);
++   pthread_attr_destroy(&attributes);
++   if (ret) {
++      free(start);
++      return 0;
++   }
++   return thread;
++#elif defined(HAVE_PTHREAD)
+    sigset_t saved_set, new_set;
+    int ret;
+ 

@@ -23,6 +23,7 @@ host_gl_wait_frame and host_gl_buffer_write are the Android host's
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define WINDOW_WIDTH 1280
@@ -63,6 +64,16 @@ static EGLSurface surface = EGL_NO_SURFACE;
 static EGLContext context = EGL_NO_CONTEXT;
 static EGLConfig config;
 static int window_made;
+/* Mesa's GL thread (port/switch/mesa: built with port/switch/mesa/build_mesa.sh),
+which takes the driver's work off the game's main thread; only if
+sdmc:/switch/opence/glthread exists: as it is, the campaign is slower with it
+(each frame's vertices, about 5 MB, are copied through its queue, which
+fills, and the main thread waited 45% of its time for it) */
+static int glthread;
+#define GLTHREAD_PATH "sdmc:/switch/opence/glthread"
+/* under the GL thread, glBufferSubData is queued without waiting for the
+thread only below this size (Mesa's MARSHAL_MAX_CMD_SIZE, less its command) */
+#define QUEUED_WRITE_BYTES 8000u
 /* the game's swap interval (display.vsync), and when the next frame may be
 shown under the host's limit */
 static int wanted_interval = 1;
@@ -172,6 +183,14 @@ uint32_t host_sdl_gl_create_context(uint32_t window)
 		return 0;
 	if (context != EGL_NO_CONTEXT)
 		return CONTEXT_HANDLE;
+	{
+		FILE *flag = fopen(GLTHREAD_PATH, "r");
+
+		glthread = flag != NULL;
+		if (flag)
+			fclose(flag);
+		setenv("mesa_glthread", glthread ? "true" : "false", 1);
+	}
 	context = eglCreateContext(display, config, EGL_NO_CONTEXT, context_attributes);
 	if (context == EGL_NO_CONTEXT)
 	{
@@ -179,8 +198,8 @@ uint32_t host_sdl_gl_create_context(uint32_t window)
 			attributes[SDL_GL_CONTEXT_MAJOR_VERSION], attributes[SDL_GL_CONTEXT_MINOR_VERSION], eglGetError());
 		return 0;
 	}
-	host_logf(HOST_LOG_INFO, "OpenGL ES %d.%d context", attributes[SDL_GL_CONTEXT_MAJOR_VERSION],
-		attributes[SDL_GL_CONTEXT_MINOR_VERSION]);
+	host_logf(HOST_LOG_INFO, "OpenGL ES %d.%d context%s", attributes[SDL_GL_CONTEXT_MAJOR_VERSION],
+		attributes[SDL_GL_CONTEXT_MINOR_VERSION], glthread ? ", with Mesa's GL thread (if this Mesa has it)" : "");
 	return CONTEXT_HANDLE;
 }
 
@@ -345,7 +364,26 @@ only writes ranges no queued draw reads (the Android host's comment explains
 why without invalidation) */
 void host_gl_buffer_write(uint32_t target, uint32_t offset, uint32_t size, const void *data)
 {
-	void *mapping = glMapBufferRange(target, offset, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+	void *mapping;
+
+	/* the GL thread would stop for the mapping, and for a larger
+	glBufferSubData: queued pieces instead */
+	if (glthread)
+	{
+		const uint8_t *bytes = data;
+
+		while (size)
+		{
+			uint32_t piece = size < QUEUED_WRITE_BYTES ? size : QUEUED_WRITE_BYTES;
+
+			glBufferSubData(target, offset, piece, bytes);
+			offset += piece;
+			bytes += piece;
+			size -= piece;
+		}
+		return;
+	}
+	mapping = glMapBufferRange(target, offset, size, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
 
 	if (!mapping)
 	{
