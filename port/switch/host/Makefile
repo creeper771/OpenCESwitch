@@ -12,17 +12,21 @@ OUT     := $(ROOT)/build/switch
 GUEST   := $(ROOT)/build/android/halo_guest.elf
 
 LIBNX   ?= $(DEVKITPRO)/libnx
+PORTLIBS ?= $(DEVKITPRO)/portlibs/switch
 TOOLS   := $(DEVKITPRO)/tools/bin
 CC      := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-gcc
+# (the link is C++'s: Mesa's shader compiler needs its runtime)
+CXX     := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-g++
 
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS  := -g -O2 -std=gnu11 -Wall -Wextra -ffunction-sections $(ARCH) -D__SWITCH__ \
-	-I. -I$(LIBNX)/include -I$(ROOT)/port/android/include
+	-I. -I$(LIBNX)/include -I$(PORTLIBS)/include -I$(ROOT)/port/android/include
 
-LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) -L$(LIBNX)/lib
-LIBS    := -lnx
+LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) -L$(PORTLIBS)/lib -L$(LIBNX)/lib
+# switch-mesa: EGL and OpenGL ES on the nouveau driver
+LIBS    := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lnx
 
-SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c \
+SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c host_gl.c host_profile.c host_network.c \
 	host_watch_hash.c posix_files.c
 ASSEMBLY := host_stack.s host_stubs.s
 OBJECTS := $(addprefix $(OUT)/obj/,$(SOURCES:.c=.o) $(ASSEMBLY:.s=.o))
@@ -46,7 +50,7 @@ $(OUT)/obj/%.o: %.s | $(OUT)/obj
 	$(CC) $(ARCH) -c $< -o $@
 
 $(OUT)/opence.elf: $(OBJECTS)
-	$(CC) $(OBJECTS) $(LDFLAGS) $(LIBS) -o $@
+	$(CXX) $(OBJECTS) $(LDFLAGS) $(LIBS) -o $@
 
 $(GUEST):
 	@echo "build the guest image first: ninja build/android/halo_guest.elf" && false

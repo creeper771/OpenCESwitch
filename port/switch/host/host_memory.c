@@ -435,6 +435,7 @@ static int watch_active;
 static uint8_t page_hash_watched[WATCH_PAGE_COUNT];
 static uint64_t page_hash[WATCH_PAGE_COUNT];
 static uint32_t page_hashed_frame[WATCH_PAGE_COUNT];
+static uint8_t page_unchanged[WATCH_PAGE_COUNT];
 static struct watch_hash page_hashes =
 {
 	.base = (const uint8_t *)(uintptr_t)HALO_GUEST_WINDOW_BASE,
@@ -445,6 +446,11 @@ static struct watch_hash page_hashes =
 	.generation = page_generation,
 	.current_generation = &current_generation,
 	.frame = 1,
+	/* pages that stay the same are hashed only every few frames, as on the
+	web (port/web/src/web_memory_watch.c): hashing every page each frame
+	is too slow on the Switch's cores. The writes the guest announces
+	(host_memory_watch_prepare_write) are seen at once. */
+	.unchanged = page_unchanged,
 };
 
 static int in_window(uint64_t address)
@@ -486,19 +492,35 @@ uint32_t host_memory_watch_serial(void)
 
 uint32_t host_memory_watch_generation(uint32_t address, uint32_t size)
 {
-	uint32_t first, last;
+	uint32_t first, last, generation;
+	uint64_t start;
 
 	if (!window_pages(address, size, &first, &last))
 		return 0;
-	return watch_hash_generation(&page_hashes, first, last);
+	start = host_now();
+	generation = watch_hash_generation(&page_hashes, first, last);
+	HOST_ADD(hash_time, host_now() - start);
+	return generation;
 }
 
-/* nothing: a write shows in the next hash, and there is no protection to
-fault on (as on Android under hashing) */
+/* the pages are about to be written: hashed every frame again until they
+settle (with the unchanged counts above) */
 void host_memory_watch_prepare_write(uint32_t address, uint32_t size)
 {
-	(void)address;
-	(void)size;
+	uint64_t start = address;
+	uint32_t first, last;
+
+	if (!watch_active || !size)
+		return;
+	if (start + size <= HALO_GUEST_WINDOW_BASE || start >= (uint64_t)HALO_GUEST_WINDOW_BASE + HALO_GUEST_WINDOW_SIZE)
+		return;
+	if (start < HALO_GUEST_WINDOW_BASE)
+	{
+		size -= (uint32_t)(HALO_GUEST_WINDOW_BASE - start);
+		start = HALO_GUEST_WINDOW_BASE;
+	}
+	if (window_pages((uint32_t)start, size, &first, &last))
+		watch_hash_prepare_write(&page_hashes, first, last);
 }
 
 void host_memory_watch_forget(uint32_t address, uint32_t size)

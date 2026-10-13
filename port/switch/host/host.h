@@ -59,6 +59,12 @@ struct host_activity
 	volatile uint64_t sleep_time;
 	volatile uint64_t wait_time;
 	volatile uint64_t mapping_time;
+	/* the renderer's: texture write tracking (hashing), the end-of-frame
+	fence waits, buffer readbacks, and eglSwapBuffers */
+	volatile uint64_t hash_time;
+	volatile uint64_t fence_time;
+	volatile uint64_t readback_time;
+	volatile uint64_t swap_time;
 };
 
 static inline uint64_t host_now(void)
@@ -77,6 +83,25 @@ void host_log(int priority, const char *text);
 void host_abort(const char *reason) __attribute__((noreturn));
 void host_exit(int code) __attribute__((noreturn));
 void host_android_path(int which, char *buffer, uint32_t size);
+void host_console_close(void);
+
+/* host_gl.c */
+void *host_gl_resolve(const char *name);
+uint32_t host_sdl_create_window(const char *title, int width, int height, int64_t flags);
+void host_sdl_window_size_in_pixels(uint32_t window, int *width, int *height);
+int host_sdl_set_relative_mouse(uint32_t window, int enabled);
+int host_sdl_gl_set_attribute(int attribute, int value);
+uint32_t host_sdl_gl_create_context(uint32_t window);
+int host_sdl_gl_make_current(uint32_t window, uint32_t context);
+int host_sdl_gl_set_swap_interval(int interval);
+int host_sdl_gl_swap_window(uint32_t window);
+int host_sdl_show_simple_message_box(uint32_t flags, const char *title, const char *message);
+void host_gl_get_string(uint32_t name, int index, char *buffer, uint32_t size);
+int host_gl_has_extension(const char *name);
+void host_gl_read_buffer(uint32_t buffer, uint32_t offset, uint32_t size, void *data);
+void host_gl_fence_frame(uint32_t slot);
+void host_gl_wait_frame(uint32_t slot);
+void host_gl_buffer_write(uint32_t target, uint32_t offset, uint32_t size, const void *data);
 
 /* host_memory.c */
 int host_memory_initialize(void);
@@ -142,6 +167,21 @@ int host_posix_fstat(int descriptor, struct posix_file_information *information)
 int host_posix_seek(int descriptor, int offset_low, int offset_high, int whence,
 	unsigned int *position_low, unsigned int *position_high);
 int host_posix_truncate(int descriptor, unsigned int size_low, unsigned int size_high);
+
+/* an import the host implements, by name */
+struct host_import
+{
+	const char *name;
+	void *function;
+};
+
+/* host_network.c: as without a network, until the host has sockets */
+extern const struct host_import host_network_imports[];
+
+/* host_profile.c */
+void host_profile_start(void);
+void host_profile_report(void);
+void host_profile_syscall(long long number);
 
 /* host_imports.c */
 void *host_resolve_import(const char *name, uint32_t index);

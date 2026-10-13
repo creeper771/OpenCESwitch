@@ -8,16 +8,16 @@ evidence for it are in `halo_ce_switch_port_guide.md`.
 
 ## State
 
-On a Switch (system 23.0.0), the game starts, reads its maps, reaches the
-main menu and plays its music. Not done yet:
+On a Switch (system 23.0.0), the game starts, reads its maps, and shows
+the main menu at 60 frames a second with its music. Not done yet:
 
 | Part | State |
 | --- | --- |
 | Memory below 4 GB, the image, threads, files, time | Done |
 | Sound | Done (audout); no microphone |
-| Picture | None yet: the game runs without a renderer (`HALO_NULL_RENDERER`), and the screen shows the host's log |
+| Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), 852x480 drawn on the 1280x720 screen |
 | Controllers | None yet |
-| Network, sockets | None yet |
+| Network, sockets | None yet: the game's network functions fail as without a network (`host_network.c`) |
 
 An import the host does not implement yet logs its name in `host.txt` the
 first time the game calls it.
@@ -43,8 +43,10 @@ make -C port/switch/host        # build/switch/opence.nro
    memory, and it says so.
 4. Close it from the HOME menu.
 
+The screen shows the host's log until the game opens its window.
 `sdmc:/switch/opence` then holds `host.txt` (the host's log, with a
-heartbeat every 5 seconds: what the game did and where its time went),
+heartbeat every 5 seconds: what the game did, where its time went, and a
+profile of its main thread),
 the game's `debug.txt` and `config.toml`, and `save/` (the Xbox's `z:` and
 `u:`). The first start writes the game's cache files to `save/z` (about
 760 MB), which takes a few minutes on an SD card.

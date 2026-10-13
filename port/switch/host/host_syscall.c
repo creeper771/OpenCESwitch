@@ -896,6 +896,7 @@ long long host_syscall(long long number, long long a, long long b, long long c,
 	long long d, long long e, long long f)
 {
 	__atomic_add_fetch(&host_activity.system_calls, 1, __ATOMIC_RELAXED);
+	host_profile_syscall(number);
 	switch (number)
 	{
 	case __NR_read:

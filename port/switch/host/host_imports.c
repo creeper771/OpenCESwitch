@@ -82,11 +82,7 @@ static int sdl_poll_event(void *event)
 
 /* ---------- the table */
 
-static const struct
-{
-	const char *name;
-	void *function;
-} implemented[] =
+static const struct host_import implemented[] =
 {
 	{"host_syscall", (void *)host_syscall},
 	{"host_log", (void *)host_log},
@@ -117,6 +113,22 @@ static const struct
 	{"host_sdl_get_audio_stream_data", (void *)host_sdl_get_audio_stream_data},
 	{"host_sdl_get_audio_stream_available", (void *)host_sdl_get_audio_stream_available},
 	{"host_sdl_destroy_audio_stream", (void *)host_sdl_destroy_audio_stream},
+	/* host_gl.c */
+	{"host_sdl_create_window", (void *)host_sdl_create_window},
+	{"host_sdl_window_size_in_pixels", (void *)host_sdl_window_size_in_pixels},
+	{"host_sdl_set_relative_mouse", (void *)host_sdl_set_relative_mouse},
+	{"host_sdl_gl_set_attribute", (void *)host_sdl_gl_set_attribute},
+	{"host_sdl_gl_create_context", (void *)host_sdl_gl_create_context},
+	{"host_sdl_gl_make_current", (void *)host_sdl_gl_make_current},
+	{"host_sdl_gl_set_swap_interval", (void *)host_sdl_gl_set_swap_interval},
+	{"host_sdl_gl_swap_window", (void *)host_sdl_gl_swap_window},
+	{"host_sdl_show_simple_message_box", (void *)host_sdl_show_simple_message_box},
+	{"host_gl_get_string", (void *)host_gl_get_string},
+	{"host_gl_has_extension", (void *)host_gl_has_extension},
+	{"host_gl_read_buffer", (void *)host_gl_read_buffer},
+	{"host_gl_fence_frame", (void *)host_gl_fence_frame},
+	{"host_gl_wait_frame", (void *)host_gl_wait_frame},
+	{"host_gl_buffer_write", (void *)host_gl_buffer_write},
 	/* port/linux/src/posix_files.c, as on Android; the functions that take
 	a descriptor translate the guest's first (host_syscall.c) */
 	{"hostposix_stat", (void *)posix_stat},
@@ -141,6 +153,19 @@ void *host_resolve_import(const char *name, uint32_t index)
 	{
 		if (!strcmp(implemented[entry].name, name))
 			return implemented[entry].function;
+	}
+	for (entry = 0; host_network_imports[entry].name; entry++)
+	{
+		if (!strcmp(host_network_imports[entry].name, name))
+			return host_network_imports[entry].function;
+	}
+	/* the guest's OpenGL ES entry points (guest_gl.c) */
+	if (!strncmp(name, "hostgl_", 7))
+	{
+		void *function = host_gl_resolve(name + 7);
+
+		if (function)
+			return function;
 	}
 	missing_count++;
 	if (index >= MAXIMUM_IMPORTS)

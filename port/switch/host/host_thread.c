@@ -85,6 +85,7 @@ void host_run_guest_main(uint32_t boot)
 	if (!stack)
 		host_fatal("cannot allocate the guest's main stack");
 	svcSetThreadPriority(CUR_THREAD_HANDLE, THREAD_PRIORITY);
+	host_profile_start();
 	host_logf(HOST_LOG_INFO, "starting the guest (stack %08llx)", (unsigned long long)(uintptr_t)stack);
 	host_call_on_stack(boot, guest_main, stack + MAIN_STACK_SIZE);
 	host_fatal("the guest returned from __guest_start");

@@ -34,6 +34,8 @@ struct host_activity host_activity;
 
 static FILE *log_file;
 static Mutex log_lock;
+/* the text console, on the screen until the guest's OpenGL takes it */
+static int console_open;
 static PadState pad;
 
 /* ---------- the log */
@@ -43,8 +45,11 @@ static void log_line(int level, const char *text)
 	static const char *const levels[] = {"", "warning: ", "error: "};
 
 	mutexLock(&log_lock);
-	printf("%s%s\n", levels[level], text);
-	consoleUpdate(NULL);
+	if (console_open)
+	{
+		printf("%s%s\n", levels[level], text);
+		consoleUpdate(NULL);
+	}
 	if (log_file)
 	{
 		fprintf(log_file, "%s%s\n", levels[level], text);
@@ -69,6 +74,19 @@ priorities (4 information, 5 warning, 6 error) */
 void host_log(int priority, const char *text)
 {
 	log_line(priority >= 6 ? HOST_LOG_ERROR : priority == 5 ? HOST_LOG_WARN : HOST_LOG_INFO, text);
+}
+
+/* the guest's OpenGL takes the window (host_gl.c): the log goes on in
+host.txt only */
+void host_console_close(void)
+{
+	mutexLock(&log_lock);
+	if (console_open)
+	{
+		consoleExit(NULL);
+		console_open = 0;
+	}
+	mutexUnlock(&log_lock);
 }
 
 /* waits for + (the log stays on the screen until then), then ends the process */
@@ -142,6 +160,13 @@ static void heartbeat(void *unused)
 			(unsigned long long)((now.sleep_time - last.sleep_time) / 1000000),
 			(unsigned long long)((now.wait_time - last.wait_time) / 1000000),
 			(unsigned long long)((now.mapping_time - last.mapping_time) / 1000000));
+		if (now.frames != last.frames)
+			host_logf(HOST_LOG_INFO, "  renderer: hashing %llu ms, fences %llu ms, readbacks %llu ms, swaps %llu ms",
+				(unsigned long long)((now.hash_time - last.hash_time) / 1000000),
+				(unsigned long long)((now.fence_time - last.fence_time) / 1000000),
+				(unsigned long long)((now.readback_time - last.readback_time) / 1000000),
+				(unsigned long long)((now.swap_time - last.swap_time) / 1000000));
+		host_profile_report();
 		last = now;
 	}
 }
@@ -234,8 +259,9 @@ int main(int argc, char **argv)
 		"HALO_DATA_ROOT=" HOST_DATA_ROOT,
 		"HALO_SAVE_ROOT=" HOST_SAVE_ROOT,
 		"TZ=UTC0",
-		/* until the host draws (host_gl.c) */
-		"HALO_NULL_RENDERER=1",
+		/* 480 lines at the screen's 16:9 (d3d8_gl.c), as the Android host
+		gives the display's shape */
+		"HALO_DISPLAY_WIDTH=852",
 	};
 	AppletType type;
 	size_t image_size = 0;
@@ -246,6 +272,7 @@ int main(int argc, char **argv)
 	(void)argv;
 	mutexInit(&log_lock);
 	consoleInit(NULL);
+	console_open = 1;
 	padConfigureInput(1, HidNpadStyleSet_NpadStandard);
 	padInitializeDefault(&pad);
 	mkdir("sdmc:" HOST_DATA_ROOT, 0777);
