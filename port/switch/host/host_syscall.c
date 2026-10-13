@@ -822,6 +822,24 @@ static long guest_getcwd(uint64_t address, uint32_t size)
 	return (long)length;
 }
 
+/* the shutdown: the guest's files and directories are closed */
+void host_files_close(void)
+{
+	int fd;
+
+	mutexLock(&files_lock);
+	for (fd = 3; fd < MAXIMUM_FILES; fd++)
+	{
+		if (files[fd].kind == FILE_FILE)
+			close(files[fd].fd);
+		else if (files[fd].kind == FILE_DIRECTORY)
+			closedir(files[fd].directory);
+		free(files[fd].path);
+		memset(&files[fd], 0, sizeof(files[fd]));
+	}
+	mutexUnlock(&files_lock);
+}
+
 /* ---------- posix_files.c's functions that take a descriptor: the guest's
 descriptors are this file's, not newlib's */
 

@@ -63,6 +63,19 @@ static EGLSurface surface = EGL_NO_SURFACE;
 static EGLContext context = EGL_NO_CONTEXT;
 static EGLConfig config;
 static int window_made;
+/* the game's swap interval (display.vsync), and when the next frame may be
+shown under the host's limit */
+static int wanted_interval = 1;
+static uint64_t next_frame;
+
+/* Mesa's Switch surface has two buffers, and with a swap interval of 1 a
+frame that misses a refresh waits for the next to get one back
+(nwindowDequeueBuffer): a frame of 17 ms took 33, the game dropped from 60
+frames a second to 30 and back, and the campaign's profile spent 15% of
+its main thread there. The window's interval is therefore 0, and the host
+keeps the game to 60 frames a second itself: a quicker frame waits for its
+turn, a slower one is shown when it is done. */
+#define FRAME_NANOSECONDS 16666667ULL
 
 void *host_gl_resolve(const char *name)
 {
@@ -192,7 +205,8 @@ int host_sdl_gl_make_current(uint32_t window, uint32_t handle)
 
 int host_sdl_gl_set_swap_interval(int interval)
 {
-	return display != EGL_NO_DISPLAY && eglSwapInterval(display, interval);
+	wanted_interval = interval;
+	return display != EGL_NO_DISPLAY && eglSwapInterval(display, 0);
 }
 
 int host_sdl_gl_swap_window(uint32_t window)
@@ -201,9 +215,39 @@ int host_sdl_gl_swap_window(uint32_t window)
 	int result;
 
 	(void)window;
+	if (wanted_interval > 0)
+	{
+		if (start < next_frame)
+		{
+			svcSleepThread((int64_t)(next_frame - start));
+			next_frame += FRAME_NANOSECONDS;
+		}
+		else
+		{
+			/* (behind: the next frame keeps its full time) */
+			next_frame = start + FRAME_NANOSECONDS;
+		}
+	}
 	result = display != EGL_NO_DISPLAY && eglSwapBuffers(display, surface);
 	HOST_ADD(swap_time, host_now() - start);
 	return result;
+}
+
+/* the shutdown, on the thread that drew (the game's main thread): EGL lets
+go of the window and of the GPU's memory */
+void host_gl_stop(void)
+{
+	if (display == EGL_NO_DISPLAY)
+		return;
+	eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+	if (context != EGL_NO_CONTEXT)
+		eglDestroyContext(display, context);
+	if (surface != EGL_NO_SURFACE)
+		eglDestroySurface(display, surface);
+	eglTerminate(display);
+	context = EGL_NO_CONTEXT;
+	surface = EGL_NO_SURFACE;
+	display = EGL_NO_DISPLAY;
 }
 
 /* a message for the player: the host's log (there is no message box yet) */

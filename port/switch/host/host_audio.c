@@ -285,3 +285,14 @@ void host_sdl_destroy_audio_stream(uint32_t handle)
 	if (stream)
 		stream->quit = 1;
 }
+
+/* the shutdown: the streams' threads are paused (host_threads_stop), so the
+output stops here, which releases their buffers */
+void host_audio_stop(void)
+{
+	if (!audout_ready)
+		return;
+	audoutStopAudioOut();
+	audoutExit();
+	audout_ready = 0;
+}

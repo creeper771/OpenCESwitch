@@ -16,6 +16,7 @@ thread's libnx thread and stack are released when the next one is made.
 
 #include "host.h"
 
+#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -49,6 +50,11 @@ static __thread uint32_t guest_tp;
 static __thread uint64_t thread_id;
 static uint64_t next_thread_id = 1;
 static Mutex threads_lock;
+/* the guest's exit on its main thread returns here, to the host's stack
+(host_guest_exited) */
+static jmp_buf guest_exit;
+static Handle main_thread = INVALID_HANDLE;
+static int guest_exit_code;
 static struct guest_thread_start *threads;
 static int next_core;
 
@@ -78,17 +84,56 @@ static void guest_main(uint64_t boot)
 	host_fatal("the guest returned from __guest_start");
 }
 
-void host_run_guest_main(uint32_t boot)
+/* runs the game's main until it exits (on this thread); returns its code */
+int host_run_guest_main(uint32_t boot)
 {
 	char *stack = host_low_map(MAIN_STACK_SIZE);
 
 	if (!stack)
 		host_fatal("cannot allocate the guest's main stack");
+	main_thread = threadGetCurHandle();
 	svcSetThreadPriority(CUR_THREAD_HANDLE, THREAD_PRIORITY);
 	host_profile_start();
 	host_logf(HOST_LOG_INFO, "starting the guest (stack %08llx)", (unsigned long long)(uintptr_t)stack);
-	host_call_on_stack(boot, guest_main, stack + MAIN_STACK_SIZE);
-	host_fatal("the guest returned from __guest_start");
+	if (setjmp(guest_exit) == 0)
+	{
+		host_call_on_stack(boot, guest_main, stack + MAIN_STACK_SIZE);
+		host_fatal("the guest returned from __guest_start");
+	}
+	svcSetThreadPriority(CUR_THREAD_HANDLE, 0x2c);
+	return guest_exit_code;
+}
+
+/* the game exits: on its main thread, back to host_run_guest_main (the
+guest's stack is left behind); 0 on any other thread, which cannot */
+int host_guest_exited(int code)
+{
+	if (main_thread == INVALID_HANDLE || threadGetCurHandle() != main_thread)
+		return 0;
+	guest_exit_code = code;
+	longjmp(guest_exit, 1);
+}
+
+/* The guest's other threads, once the game has exited: Horizon cannot end
+another thread, so each is paused for good, and its handle and libnx stack
+let go, before the memory they ran in is unmapped. */
+void host_threads_stop(void)
+{
+	struct guest_thread_start *start, *next;
+
+	mutexLock(&threads_lock);
+	for (start = threads; start; start = next)
+	{
+		next = start->next;
+		if (!__atomic_load_n(&start->finished, __ATOMIC_ACQUIRE))
+			svcSetThreadActivity(start->thread.handle, ThreadActivity_Paused);
+		else
+			threadWaitForExit(&start->thread);
+		threadClose(&start->thread);
+		free(start);
+	}
+	threads = NULL;
+	mutexUnlock(&threads_lock);
 }
 
 /* ---------- guest threads */

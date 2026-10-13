@@ -33,16 +33,23 @@ static struct sample_table program_counters;
 static struct sample_table link_registers;
 
 /* every sample since the start, written whole to PROFILE_PATH every
-sixth heartbeat (30 seconds), for a profile by function (port/switch/README.md) */
+twelfth heartbeat (a minute), for a profile by function (port/switch/README.md) */
 #define PROFILE_PATH "sdmc:/switch/opence/profile.txt"
-#define ALL_SIZE 65536
+#define ALL_SIZE 131072
+/* a table nearly full is not searched further: the sample is dropped */
+#define ALL_PROBES 64
 
-static uint64_t all_addresses[ALL_SIZE];
-static uint64_t all_callers[ALL_SIZE];
+/* where the thread was, then its callers: the link register, and the
+return addresses of CHAIN_DEPTH - 2 more frame records (the paused
+thread's stack is read: one query of its mapping, then reads within it) */
+#define CHAIN_DEPTH 8
+
+static uint64_t all_chains[ALL_SIZE][CHAIN_DEPTH];
 static uint32_t all_counts[ALL_SIZE];
 static uint32_t all_total;
 static Mutex profile_lock;
 static Handle profiled = INVALID_HANDLE;
+static Thread sampler_thread;
 static volatile uint32_t syscall_counts[SYSCALL_NUMBERS];
 
 void host_profile_syscall(long long number)
@@ -72,20 +79,52 @@ static void table_add(struct sample_table *table, uint64_t address)
 
 static void describe(char *text, size_t size, uint64_t address);
 
-/* counted by where the thread was and what called it */
-static void all_add(uint64_t address, uint64_t caller)
+/* the thread's chain: pc, lr, then the return addresses of the frame
+records from fp (each record: the caller's fp, then the return address),
+all within the mapping that holds the stack pointer */
+static void chain_of(const ThreadContext *context, uint64_t *chain)
 {
-	uint32_t slot = (uint32_t)(((address >> 2) ^ (caller >> 2) * 31) * 2654435761u) % ALL_SIZE;
-	uint32_t probe;
+	uint64_t fp = context->fp, low = context->sp, high = 0;
+	MemoryInfo info;
+	u32 page_info;
+	int depth;
 
-	for (probe = 0; probe < ALL_SIZE; probe++)
+	memset(chain, 0, CHAIN_DEPTH * sizeof(*chain));
+	chain[0] = context->pc.x;
+	chain[1] = context->lr;
+	if (R_SUCCEEDED(svcQueryMemory(&info, &page_info, context->sp)) && (info.perm & Perm_R))
+		high = info.addr + info.size;
+	for (depth = 2; depth < CHAIN_DEPTH; depth++)
 	{
-		uint32_t index = (slot + probe) % ALL_SIZE;
+		uint64_t next;
 
-		if ((all_addresses[index] == address && all_callers[index] == caller) || !all_counts[index])
+		if (fp < low || fp + 16 > high || (fp & 7))
+			break;
+		next = ((const uint64_t *)(uintptr_t)fp)[0];
+		chain[depth] = ((const uint64_t *)(uintptr_t)fp)[1];
+		/* (the first record may be lr's own frame's: skip the repeat) */
+		if (depth == 2 && chain[depth] == chain[1])
+			depth--;
+		if (next <= fp)
+			break;
+		fp = next;
+	}
+}
+
+static void all_add(const uint64_t *chain)
+{
+	uint32_t hash = 0, probe;
+	int depth;
+
+	for (depth = 0; depth < CHAIN_DEPTH; depth++)
+		hash = (hash ^ (uint32_t)(chain[depth] >> 2)) * 2654435761u;
+	for (probe = 0; probe < ALL_PROBES; probe++)
+	{
+		uint32_t index = (hash + probe) % ALL_SIZE;
+
+		if (!all_counts[index] || !memcmp(all_chains[index], chain, sizeof(all_chains[index])))
 		{
-			all_addresses[index] = address;
-			all_callers[index] = caller;
+			memcpy(all_chains[index], chain, sizeof(all_chains[index]));
 			all_counts[index]++;
 			all_total++;
 			return;
@@ -93,53 +132,79 @@ static void all_add(uint64_t address, uint64_t caller)
 	}
 }
 
+/* (written whole to a new file, which then replaces the last: a file cut
+off by the game's exit lost most of its samples) */
 static void all_write(void)
 {
-	FILE *file = fopen(PROFILE_PATH, "w");
-	char where[48], caller[48];
+	FILE *file = fopen(PROFILE_PATH ".new", "w");
+	char text[48];
 	uint32_t index;
+	int depth;
 
 	if (!file)
 		return;
-	fprintf(file, "# samples of the main thread since the start: count, where, called from\n# %u samples\n",
+	fprintf(file, "# samples of the main thread since the start: count, where, then its callers\n# %u samples\n",
 		all_total);
 	for (index = 0; index < ALL_SIZE; index++)
 	{
 		if (!all_counts[index])
 			continue;
-		describe(where, sizeof(where), all_addresses[index]);
-		describe(caller, sizeof(caller), all_callers[index]);
-		fprintf(file, "%u\t%s\t%s\n", all_counts[index], where, caller);
+		fprintf(file, "%u", all_counts[index]);
+		for (depth = 0; depth < CHAIN_DEPTH; depth++)
+		{
+			describe(text, sizeof(text), all_chains[index][depth]);
+			fprintf(file, "\t%s", text);
+		}
+		fprintf(file, "\n");
 	}
-	fclose(file);
+	if (fclose(file) == 0)
+	{
+		remove(PROFILE_PATH);
+		rename(PROFILE_PATH ".new", PROFILE_PATH);
+	}
 }
 
+/* pauses the sampler for good (the shutdown) */
+void host_profile_stop(void)
+{
+	if (sampler_thread.handle == INVALID_HANDLE || !sampler_thread.handle)
+		return;
+	svcSetThreadActivity(sampler_thread.handle, ThreadActivity_Paused);
+	threadClose(&sampler_thread);
+}
+
+/* The thread is paused only to read its registers and walk its stack;
+recording waits for the lock (the heartbeat's report and file) with it
+running again. */
 static void sampler(void *unused)
 {
 	(void)unused;
 	for (;;)
 	{
 		ThreadContext context;
+		uint64_t chain[CHAIN_DEPTH];
+		int sampled;
 
 		svcSleepThread(SAMPLE_INTERVAL);
 		if (R_FAILED(svcSetThreadActivity(profiled, ThreadActivity_Paused)))
 			continue;
-		if (R_SUCCEEDED(svcGetThreadContext3(&context, profiled)))
-		{
-			mutexLock(&profile_lock);
-			table_add(&program_counters, context.pc.x);
-			table_add(&link_registers, context.lr);
-			all_add(context.pc.x, context.lr);
-			mutexUnlock(&profile_lock);
-		}
+		sampled = R_SUCCEEDED(svcGetThreadContext3(&context, profiled));
+		if (sampled)
+			chain_of(&context, chain);
 		svcSetThreadActivity(profiled, ThreadActivity_Runnable);
+		if (!sampled)
+			continue;
+		mutexLock(&profile_lock);
+		table_add(&program_counters, chain[0]);
+		table_add(&link_registers, chain[1]);
+		all_add(chain);
+		mutexUnlock(&profile_lock);
 	}
 }
 
 /* samples the calling thread from now on */
 void host_profile_start(void)
 {
-	static Thread thread;
 	Result rc;
 
 	if (!envIsSyscallHinted(0x32) || !envIsSyscallHinted(0x33))
@@ -149,9 +214,9 @@ void host_profile_start(void)
 	}
 	profiled = threadGetCurHandle();
 	/* (above the guest's priority, and the heartbeat's, on a core of its own) */
-	rc = threadCreate(&thread, sampler, NULL, NULL, 0x4000, 0x2b, 2);
+	rc = threadCreate(&sampler_thread, sampler, NULL, NULL, 0x4000, 0x2b, 2);
 	if (R_SUCCEEDED(rc))
-		rc = threadStart(&thread);
+		rc = threadStart(&sampler_thread);
 	if (R_FAILED(rc))
 		host_logf(HOST_LOG_WARN, "profile: cannot start the sampler: 0x%x", rc);
 }
@@ -217,8 +282,9 @@ void host_profile_report(void)
 	mutexLock(&profile_lock);
 	table_report(&program_counters, "where the main thread was");
 	table_report(&link_registers, "what it was called from");
-	/* (every sixth: the file is large) */
-	if (++reports % 6 == 0)
+	/* (every twelfth, a minute: the file is large, and its writes share the
+	SD card with the game's reads) */
+	if (++reports % 12 == 0)
 		all_write();
 	mutexUnlock(&profile_lock);
 

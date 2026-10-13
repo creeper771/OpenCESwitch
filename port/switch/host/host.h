@@ -140,7 +140,9 @@ int host_load_image(const void *file, size_t size);
 uint32_t host_get_tp(void);
 void host_set_tp(uint32_t thread);
 int host_thread_create(uint32_t guest_thread, uint32_t stack_size);
-void host_run_guest_main(uint32_t boot) __attribute__((noreturn));
+int host_run_guest_main(uint32_t boot);
+int host_guest_exited(int code);
+void host_threads_stop(void);
 uint64_t host_thread_id(void);
 int host_native_thread_create(void (*function)(void *), void *argument, uint32_t stack_size, int priority);
 uint32_t host_call_guest(uint32_t function, uint32_t a, uint32_t b, uint32_t c, uint32_t d);
@@ -182,6 +184,13 @@ int host_input_poll_event(void *event);
 
 /* host_network.c: as without a network, until the host has sockets */
 extern const struct host_import host_network_imports[];
+
+/* the shutdown, once the game has exited (host_main.c) */
+void host_audio_stop(void);
+void host_gl_stop(void);
+void host_memory_release(void);
+void host_files_close(void);
+void host_profile_stop(void);
 
 /* host_profile.c */
 void host_profile_start(void);

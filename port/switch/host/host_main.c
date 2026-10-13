@@ -34,6 +34,10 @@ struct host_activity host_activity;
 
 static FILE *log_file;
 static Mutex log_lock;
+/* the shutdown has paused threads, which may hold log_lock: the log only
+tries it from then on */
+static volatile int shutting_down;
+static volatile int heartbeat_stop;
 /* the text console, on the screen until the guest's OpenGL takes it */
 static int console_open;
 static PadState pad;
@@ -44,7 +48,15 @@ static void log_line(int level, const char *text)
 {
 	static const char *const levels[] = {"", "warning: ", "error: "};
 
-	mutexLock(&log_lock);
+	if (shutting_down)
+	{
+		if (!mutexTryLock(&log_lock))
+			return;
+	}
+	else
+	{
+		mutexLock(&log_lock);
+	}
 	if (console_open)
 	{
 		printf("%s%s\n", levels[level], text);
@@ -133,9 +145,12 @@ void host_abort(const char *reason)
 	host_fatal("the game stopped: %s", reason ? reason : "(no reason given)");
 }
 
+/* the game exits: on its main thread, the host shuts down and returns to
+the homebrew loader (main); from another thread, the process ends */
 void host_exit(int code)
 {
 	host_logf(HOST_LOG_INFO, "the game exited with code %d", code);
+	host_guest_exited(code);
 	end_process();
 }
 
@@ -151,9 +166,14 @@ static void heartbeat(void *unused)
 	memset(&last, 0, sizeof(last));
 
 	(void)unused;
-	for (;;)
+	while (!heartbeat_stop)
 	{
-		svcSleepThread(HEARTBEAT_SECONDS * 1000000000LL);
+		int tick;
+
+		for (tick = 0; tick < HEARTBEAT_SECONDS * 10 && !heartbeat_stop; tick++)
+			svcSleepThread(100000000LL);
+		if (heartbeat_stop)
+			break;
 		struct host_activity now = host_activity;
 
 		host_logf(HOST_LOG_INFO, "heartbeat: %llu system calls, %llu input polls, %llu frames; "
@@ -183,14 +203,16 @@ static void heartbeat(void *unused)
 /* (at the usual priority, above the guest's preemptive one, so that it runs
 while the guest's threads are busy; on core 2, away from the game's main
 thread on core 0, which its writes to the SD card would otherwise stall) */
+static Thread heartbeat_thread;
+
 static void start_heartbeat(void)
 {
-	static Thread thread;
+	Thread *thread = &heartbeat_thread;
 
-	Result rc = threadCreate(&thread, heartbeat, NULL, NULL, 0x4000, 0x2c, 2);
+	Result rc = threadCreate(thread, heartbeat, NULL, NULL, 0x4000, 0x2c, 2);
 
 	if (R_SUCCEEDED(rc))
-		rc = threadStart(&thread);
+		rc = threadStart(thread);
 	if (R_FAILED(rc))
 		host_logf(HOST_LOG_WARN, "cannot start the heartbeat: 0x%x", rc);
 }
@@ -261,6 +283,12 @@ static void *read_file(const char *path, size_t *size)
 
 /* ---------- main */
 
+static void NX_NORETURN exit_process(int code)
+{
+	(void)code;
+	svcExitProcess();
+}
+
 int main(int argc, char **argv)
 {
 	static const char *const environment[] =
@@ -277,6 +305,7 @@ int main(int argc, char **argv)
 	size_t image_size = 0;
 	void *image;
 	Result rc;
+	int code;
 
 	(void)argc;
 	(void)argv;
@@ -310,5 +339,33 @@ int main(int argc, char **argv)
 
 	host_logf(HOST_LOG_INFO, "data %s, saves %s", HOST_DATA_ROOT, HOST_SAVE_ROOT);
 	start_heartbeat();
-	host_run_guest_main(make_boot(environment, (int)(sizeof(environment) / sizeof(environment[0]))));
+	code = host_run_guest_main(make_boot(environment, (int)(sizeof(environment) / sizeof(environment[0]))));
+
+	/* the game has exited: everything it used is let go, in an order that
+	frees nothing still in use, and the homebrew loader takes over */
+	if (heartbeat_thread.handle)
+	{
+		heartbeat_stop = 1;
+		threadWaitForExit(&heartbeat_thread);
+		threadClose(&heartbeat_thread);
+	}
+	shutting_down = 1;
+	host_profile_stop();
+	host_threads_stop();
+	host_audio_stop();
+	host_gl_stop();
+	host_files_close();
+	host_memory_release();
+	host_logf(HOST_LOG_INFO, "closing");
+	mutexLock(&log_lock);
+	if (log_file)
+		fclose(log_file);
+	log_file = NULL;
+	mutexUnlock(&log_lock);
+	/* libnx's exit (on main's return) closes the applet and the other
+	services, then calls this instead of returning to the homebrew loader:
+	the Homebrew Menu it would start could not set up the GPU after Mesa,
+	and ending the process without libnx's exit shows a software error */
+	envSetExitFuncPtr(exit_process);
+	return code;
 }
