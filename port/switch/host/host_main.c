@@ -283,6 +283,9 @@ static void *read_file(const char *path, size_t *size)
 
 /* ---------- main */
 
+/* libnx's own exit (its destructors and services, then the exit function) */
+void NX_NORETURN __libnx_exit(int code);
+
 static void NX_NORETURN exit_process(int code)
 {
 	(void)code;
@@ -352,22 +355,29 @@ int main(int argc, char **argv)
 		threadClose(&heartbeat_thread);
 	}
 	shutting_down = 1;
+	/* (each step logged: a shutdown that stops shows where) */
+	host_logf(HOST_LOG_INFO, "shutdown: the profiler and the game's threads");
 	host_profile_stop();
 	host_threads_stop();
+	host_logf(HOST_LOG_INFO, "shutdown: the sound");
 	host_audio_stop();
-	host_gl_stop();
+	host_logf(HOST_LOG_INFO, "shutdown: the game's files");
 	host_files_close();
-	host_memory_release();
+	/* (OpenGL ES and the game's memory are left to the process's end: with
+	Mesa's GL thread, EGL's own shutdown waited for that thread, which was
+	stuck, and the game froze as it quit) */
 	host_logf(HOST_LOG_INFO, "closing");
 	mutexLock(&log_lock);
 	if (log_file)
 		fclose(log_file);
 	log_file = NULL;
 	mutexUnlock(&log_lock);
-	/* libnx's exit (on main's return) closes the applet and the other
-	services, then calls this instead of returning to the homebrew loader:
-	the Homebrew Menu it would start could not set up the GPU after Mesa,
-	and ending the process without libnx's exit shows a software error */
+	/* libnx's exit closes the applet and the other services, then calls
+	exit_process instead of returning to the homebrew loader: the Homebrew
+	Menu it would start could not set up the GPU after Mesa, and ending the
+	process without libnx's exit shows a software error. It is called
+	directly, not by returning from main, which would first run atexit's
+	functions: Mesa's waits for its threads, the GL thread among them. */
 	envSetExitFuncPtr(exit_process);
-	return code;
+	__libnx_exit(code);
 }

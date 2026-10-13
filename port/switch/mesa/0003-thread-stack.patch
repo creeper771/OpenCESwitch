@@ -1,18 +1,23 @@
 --- a/src/util/u_thread.h
 +++ b/src/util/u_thread.h
-@@ -33,6 +33,11 @@
+@@ -33,6 +33,16 @@
  #include "c11/threads.h"
  #include "detect_os.h"
  
 +#ifdef __SWITCH__
 +#include <pthread.h>
 +#include <stdlib.h>
++
++/* libnx's (switch/kernel/svc.h, not included here) */
++uint32_t svcSetThreadCoreMask(uint32_t handle, int32_t preferred_core, uint32_t affinity_mask);
++uint32_t svcSetThreadPriority(uint32_t handle, uint32_t priority);
++#define U_THREAD_SWITCH_CURRENT 0xFFFF8000u
 +#endif
 +
  #ifdef HAVE_PTHREAD
  #include <signal.h>
  #ifdef PTHREAD_SETAFFINITY_IN_NP_HEADER
-@@ -48,10 +53,50 @@
+@@ -48,10 +58,57 @@
  #define cpu_set_t cpuset_t
  #endif
  
@@ -33,6 +38,13 @@
 +   struct u_thread_switch_start start = *(struct u_thread_switch_start *)context;
 +
 +   free(context);
++   /* Mesa's threads (its shader cache's, the GL thread until it moves
++    * itself: glthread.c) would start on the application's core at a
++    * priority above the application's own threads, and take its time
++    * whenever they work: core 2 instead, at the application's
++    * time-sliced priority */
++   svcSetThreadCoreMask(U_THREAD_SWITCH_CURRENT, 2, 1u << 2);
++   svcSetThreadPriority(U_THREAD_SWITCH_CURRENT, 0x3b);
 +   return (void *)(intptr_t)start.routine(start.param);
 +}
 +#endif

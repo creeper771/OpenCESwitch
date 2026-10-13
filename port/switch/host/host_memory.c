@@ -405,47 +405,6 @@ long host_guest_munmap(uint64_t address, uint64_t size)
 	return 0;
 }
 
-/* ---------- the shutdown */
-
-/* unmaps every guest mapping and gives its memory back to the heap, for the
-homebrew loader, which runs the next program in this process. A page that
-was made executable is made read/write again first (as the loader does). */
-void host_memory_release(void)
-{
-	int index;
-
-	mutexLock(&memory_lock);
-	for (index = 0; index < mapping_count; index++)
-	{
-		struct mapping *mapping = &mappings[index];
-		uint64_t page;
-		Result rc;
-
-		virtmemLock();
-		rc = svcUnmapProcessCodeMemory(process, mapping->base, (uint64_t)(uintptr_t)mapping->source, mapping->size);
-		virtmemUnlock();
-		if (R_FAILED(rc))
-		{
-			for (page = mapping->base; page < mapping->base + mapping->size; page += HOST_PAGE)
-				svcSetProcessMemoryPermission(process, page, HOST_PAGE, Perm_Rw);
-			virtmemLock();
-			rc = svcUnmapProcessCodeMemory(process, mapping->base, (uint64_t)(uintptr_t)mapping->source,
-				mapping->size);
-			virtmemUnlock();
-		}
-		if (R_FAILED(rc))
-		{
-			host_logf(HOST_LOG_ERROR, "cannot unmap %08llx-%08llx: 0x%x", (unsigned long long)mapping->base,
-				(unsigned long long)(mapping->base + mapping->size), rc);
-			continue;
-		}
-		free(mapping->source);
-		free(mapping->pages);
-	}
-	mapping_count = 0;
-	mutexUnlock(&memory_lock);
-}
-
 /* ---------- start-up */
 
 int host_memory_initialize(void)

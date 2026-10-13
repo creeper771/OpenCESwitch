@@ -276,23 +276,6 @@ int host_sdl_gl_swap_window(uint32_t window)
 	return result;
 }
 
-/* the shutdown, on the thread that drew (the game's main thread): EGL lets
-go of the window and of the GPU's memory */
-void host_gl_stop(void)
-{
-	if (display == EGL_NO_DISPLAY)
-		return;
-	eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-	if (context != EGL_NO_CONTEXT)
-		eglDestroyContext(display, context);
-	if (surface != EGL_NO_SURFACE)
-		eglDestroySurface(display, surface);
-	eglTerminate(display);
-	context = EGL_NO_CONTEXT;
-	surface = EGL_NO_SURFACE;
-	display = EGL_NO_DISPLAY;
-}
-
 /* a message for the player: the host's log (there is no message box yet) */
 int host_sdl_show_simple_message_box(uint32_t flags, const char *title, const char *message)
 {

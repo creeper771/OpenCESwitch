@@ -191,8 +191,6 @@ extern const struct host_import host_network_imports[];
 
 /* the shutdown, once the game has exited (host_main.c) */
 void host_audio_stop(void);
-void host_gl_stop(void);
-void host_memory_release(void);
 void host_files_close(void);
 void host_profile_stop(void);
 
