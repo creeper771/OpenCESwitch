@@ -31,6 +31,16 @@ struct sample_table
 
 static struct sample_table program_counters;
 static struct sample_table link_registers;
+
+/* every sample since the start, written whole to PROFILE_PATH every
+sixth heartbeat (30 seconds), for a profile by function (port/switch/README.md) */
+#define PROFILE_PATH "sdmc:/switch/opence/profile.txt"
+#define ALL_SIZE 65536
+
+static uint64_t all_addresses[ALL_SIZE];
+static uint64_t all_callers[ALL_SIZE];
+static uint32_t all_counts[ALL_SIZE];
+static uint32_t all_total;
 static Mutex profile_lock;
 static Handle profiled = INVALID_HANDLE;
 static volatile uint32_t syscall_counts[SYSCALL_NUMBERS];
@@ -60,6 +70,50 @@ static void table_add(struct sample_table *table, uint64_t address)
 	}
 }
 
+static void describe(char *text, size_t size, uint64_t address);
+
+/* counted by where the thread was and what called it */
+static void all_add(uint64_t address, uint64_t caller)
+{
+	uint32_t slot = (uint32_t)(((address >> 2) ^ (caller >> 2) * 31) * 2654435761u) % ALL_SIZE;
+	uint32_t probe;
+
+	for (probe = 0; probe < ALL_SIZE; probe++)
+	{
+		uint32_t index = (slot + probe) % ALL_SIZE;
+
+		if ((all_addresses[index] == address && all_callers[index] == caller) || !all_counts[index])
+		{
+			all_addresses[index] = address;
+			all_callers[index] = caller;
+			all_counts[index]++;
+			all_total++;
+			return;
+		}
+	}
+}
+
+static void all_write(void)
+{
+	FILE *file = fopen(PROFILE_PATH, "w");
+	char where[48], caller[48];
+	uint32_t index;
+
+	if (!file)
+		return;
+	fprintf(file, "# samples of the main thread since the start: count, where, called from\n# %u samples\n",
+		all_total);
+	for (index = 0; index < ALL_SIZE; index++)
+	{
+		if (!all_counts[index])
+			continue;
+		describe(where, sizeof(where), all_addresses[index]);
+		describe(caller, sizeof(caller), all_callers[index]);
+		fprintf(file, "%u\t%s\t%s\n", all_counts[index], where, caller);
+	}
+	fclose(file);
+}
+
 static void sampler(void *unused)
 {
 	(void)unused;
@@ -75,6 +129,7 @@ static void sampler(void *unused)
 			mutexLock(&profile_lock);
 			table_add(&program_counters, context.pc.x);
 			table_add(&link_registers, context.lr);
+			all_add(context.pc.x, context.lr);
 			mutexUnlock(&profile_lock);
 		}
 		svcSetThreadActivity(profiled, ThreadActivity_Runnable);
@@ -155,12 +210,16 @@ static void table_report(struct sample_table *table, const char *what)
 /* the heartbeat's report: the top addresses and system calls since the last */
 void host_profile_report(void)
 {
+	static uint32_t reports;
 	uint32_t counts[SYSCALL_NUMBERS];
 	int reported, number;
 
 	mutexLock(&profile_lock);
 	table_report(&program_counters, "where the main thread was");
 	table_report(&link_registers, "what it was called from");
+	/* (every sixth: the file is large) */
+	if (++reports % 6 == 0)
+		all_write();
 	mutexUnlock(&profile_lock);
 
 	for (number = 0; number < SYSCALL_NUMBERS; number++)

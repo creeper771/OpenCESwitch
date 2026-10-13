@@ -181,12 +181,13 @@ static void heartbeat(void *unused)
 }
 
 /* (at the usual priority, above the guest's preemptive one, so that it runs
-while the guest's threads are busy) */
+while the guest's threads are busy; on core 2, away from the game's main
+thread on core 0, which its writes to the SD card would otherwise stall) */
 static void start_heartbeat(void)
 {
 	static Thread thread;
 
-	Result rc = threadCreate(&thread, heartbeat, NULL, NULL, 0x4000, 0x2c, -2);
+	Result rc = threadCreate(&thread, heartbeat, NULL, NULL, 0x4000, 0x2c, 2);
 
 	if (R_SUCCEEDED(rc))
 		rc = threadStart(&thread);

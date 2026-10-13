@@ -48,7 +48,11 @@ make -C port/switch/host        # build/switch/opence.nro
 The screen shows the host's log until the game opens its window.
 `sdmc:/switch/opence` then holds `host.txt` (the host's log, with a
 heartbeat every 5 seconds: what the game did, where its time went, and a
-profile of its main thread),
+profile of its main thread), `profile.txt` (every sample of the main
+thread since the start, written every 30 seconds: its count, where the
+thread was, and what called it; `guest` addresses are for
+`llvm-symbolizer --obj=build/android/halo_guest.elf`, `host` offsets for
+`aarch64-none-elf-addr2line -f -e build/switch/opence.elf`),
 the game's `debug.txt` and `config.toml`, and `save/` (the Xbox's `z:` and
 `u:`). The first start writes the game's cache files to `save/z` (about
 760 MB), which takes a few minutes on an SD card.
