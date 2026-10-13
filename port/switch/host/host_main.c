@@ -89,9 +89,18 @@ void host_console_close(void)
 	mutexUnlock(&log_lock);
 }
 
-/* waits for + (the log stays on the screen until then), then ends the process */
+/* ends the process: once + is pressed while the log is on the screen, at
+once after the game has taken the screen (the log is in host.txt) */
 static void __attribute__((noreturn)) end_process(void)
 {
+	if (!console_open)
+	{
+		mutexLock(&log_lock);
+		if (log_file)
+			fclose(log_file);
+		log_file = NULL;
+		svcExitProcess();
+	}
 	log_line(HOST_LOG_INFO, "Press + to exit.");
 	while (appletMainLoop())
 	{

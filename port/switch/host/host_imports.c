@@ -71,13 +71,12 @@ static int sdl_set_hint(const char *name, const char *value)
 	return 1;
 }
 
-/* no events yet (no input): counted for the heartbeat, as the game polls
-once a frame */
+/* the controllers' events (host_input.c); counted for the heartbeat, as the
+game polls once a frame */
 static int sdl_poll_event(void *event)
 {
-	(void)event;
 	__atomic_add_fetch(&host_activity.input_polls, 1, __ATOMIC_RELAXED);
-	return 0;
+	return host_input_poll_event(event);
 }
 
 /* ---------- the table */
@@ -153,6 +152,11 @@ void *host_resolve_import(const char *name, uint32_t index)
 	{
 		if (!strcmp(implemented[entry].name, name))
 			return implemented[entry].function;
+	}
+	for (entry = 0; host_input_imports[entry].name; entry++)
+	{
+		if (!strcmp(host_input_imports[entry].name, name))
+			return host_input_imports[entry].function;
 	}
 	for (entry = 0; host_network_imports[entry].name; entry++)
 	{

@@ -8,15 +8,17 @@ evidence for it are in `halo_ce_switch_port_guide.md`.
 
 ## State
 
-On a Switch (system 23.0.0), the game starts, reads its maps, and shows
-the main menu at 60 frames a second with its music. Not done yet:
+On a Switch (system 23.0.0), the game runs: the menus at 60 frames a
+second, and the campaign is playable with sound, controllers and rumble,
+though below 60 frames a second and with stutters. Not done yet:
 
 | Part | State |
 | --- | --- |
 | Memory below 4 GB, the image, threads, files, time | Done |
 | Sound | Done (audout); no microphone |
 | Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), 852x480 drawn on the 1280x720 screen |
-| Controllers | None yet |
+| Controllers | Done: up to 4 (Joy-Con pairs, the handheld's, Pro Controllers), by Xbox position (B is the Xbox's A), with HD Rumble; no touch screen, keyboard or clipboard |
+| Speed | The campaign is below 60 frames a second and stutters |
 | Network, sockets | None yet: the game's network functions fail as without a network (`host_network.c`) |
 
 An import the host does not implement yet logs its name in `host.txt` the

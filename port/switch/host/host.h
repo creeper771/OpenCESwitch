@@ -175,6 +175,11 @@ struct host_import
 	void *function;
 };
 
+/* host_input.c: controllers as SDL gamepads, and no touch, keyboard or
+clipboard */
+extern const struct host_import host_input_imports[];
+int host_input_poll_event(void *event);
+
 /* host_network.c: as without a network, until the host has sockets */
 extern const struct host_import host_network_imports[];
 
