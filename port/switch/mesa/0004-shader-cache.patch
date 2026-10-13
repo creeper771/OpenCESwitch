@@ -49,17 +49,25 @@
  #include <errno.h>
  #include <dirent.h>
  #include <inttypes.h>
-@@ -55,6 +59,9 @@
+@@ -55,6 +59,17 @@
  
  #include "disk_cache.h"
  
 +struct disk_cache;
 +static void index_size_written(struct disk_cache *cache);
 +
++/* the bytes a cache file takes: newlib's stat of the SD card does not give
++ * its blocks reliably, so its length there */
++#ifdef __SWITCH__
++#define DISK_CACHE_FILE_BYTES(sb) ((uint64_t)(sb).st_size)
++#else
++#define DISK_CACHE_FILE_BYTES(sb) ((uint64_t)(sb).st_blocks * 512)
++#endif
++
  /* Number of bits to mask off from a cache key to get an index. */
  #define CACHE_INDEX_KEY_BITS 16
  
-@@ -102,6 +109,13 @@
+@@ -102,6 +117,13 @@
     /* Pointer to stored keys, (within index_mmap). */
     uint8_t *stored_keys;
  
@@ -73,7 +81,7 @@
     /* Maximum size of all cached objects (in bytes). */
     uint64_t max_size;
  
-@@ -210,9 +224,11 @@
+@@ -210,9 +232,11 @@
     uint8_t cache_version = CACHE_VERSION;
     size_t cv_size = sizeof(cache_version);
  
@@ -85,7 +93,7 @@
  
     /* A ralloc context for transient data during this invocation. */
     local = ralloc_context(NULL);
-@@ -259,6 +275,11 @@
+@@ -259,6 +283,11 @@
        }
     }
  
@@ -97,7 +105,7 @@
     if (path == NULL) {
        char *buf;
        size_t buf_size;
-@@ -293,6 +314,7 @@
+@@ -293,6 +322,7 @@
        if (path == NULL)
           goto path_fail;
     }
@@ -105,15 +113,30 @@
  
     cache->path = ralloc_strdup(cache, path);
     if (cache->path == NULL)
-@@ -331,10 +353,19 @@
+@@ -331,10 +361,34 @@
      * guarantees of the cryptographic hash, a corrupt entry is
      * unlikely to ever match a real cache key).
      */
 +#ifdef __SWITCH__
-+   cache->index_mmap = ralloc_size(cache, size);
-+   if (cache->index_mmap == NULL || lseek(fd, 0, SEEK_SET) != 0 ||
-+       read(fd, cache->index_mmap, size) != (ssize_t)size)
++   /* (a new or resized index starts empty, written so: the SD card's file
++    * system does not promise zeros where a file was extended, and a size
++    * read from there made every write evict files) */
++   cache->index_mmap = rzalloc_size(cache, size);
++   if (cache->index_mmap == NULL || lseek(fd, 0, SEEK_SET) != 0)
 +      goto path_fail;
++   if (sb.st_size == (off_t)size) {
++      if (read(fd, cache->index_mmap, size) != (ssize_t)size)
++         goto path_fail;
++   } else if (write(fd, cache->index_mmap, size) != (ssize_t)size) {
++      goto path_fail;
++   }
++   /* (and a size no cache of this one's limit can reach is such garbage,
++    * left by an earlier build: forgotten) */
++   if (*(uint64_t *)cache->index_mmap > (1ull << 40)) {
++      *(uint64_t *)cache->index_mmap = 0;
++      if (lseek(fd, 0, SEEK_SET) == 0)
++         write(fd, cache->index_mmap, sizeof(uint64_t));
++   }
 +   cache->index_fd = fd;
 +   fd = -1;
 +#else
@@ -125,7 +148,20 @@
     cache->index_mmap_size = size;
  
     cache->size = (uint64_t *) cache->index_mmap;
-@@ -442,13 +473,32 @@
+@@ -385,10 +439,12 @@
+     * The queue will resize automatically when it's full, so adding new jobs
+     * doesn't stall.
+     */
++#ifndef __SWITCH__
+    util_queue_init(&cache->cache_queue, "disk$", 32, 4,
+                    UTIL_QUEUE_INIT_RESIZE_IF_FULL |
+                    UTIL_QUEUE_INIT_USE_MINIMUM_PRIORITY |
+                    UTIL_QUEUE_INIT_SET_FULL_THREAD_AFFINITY);
++#endif
+ 
+    cache->path_init_failed = false;
+ 
+@@ -442,13 +498,32 @@
     return NULL;
  }
  
@@ -148,17 +184,27 @@
  disk_cache_destroy(struct disk_cache *cache)
  {
     if (cache && !cache->path_init_failed) {
-       util_queue_finish(&cache->cache_queue);
-       util_queue_destroy(&cache->cache_queue);
 +#ifdef __SWITCH__
 +      close(cache->index_fd);
 +#else
+       util_queue_finish(&cache->cache_queue);
+       util_queue_destroy(&cache->cache_queue);
        munmap(cache->index_mmap, cache->index_mmap_size);
 +#endif
     }
  
     ralloc_free(cache);
-@@ -531,7 +581,17 @@
+@@ -457,7 +532,9 @@
+ void
+ disk_cache_wait_for_idle(struct disk_cache *cache)
+ {
++#ifndef __SWITCH__
+    util_queue_finish(&cache->cache_queue);
++#endif
+ }
+ 
+ /* Return a filename within the cache's directory corresponding to 'key'. The
+@@ -531,7 +608,17 @@
           break;
  
        struct stat sb;
@@ -176,7 +222,16 @@
           if (!lru_atime || (sb.st_atime < lru_atime)) {
              size_t len = strlen(entry->d_name);
  
-@@ -660,6 +720,7 @@
+@@ -597,7 +684,7 @@
+    unlink(filename);
+    free (filename);
+ 
+-   return sb.st_blocks * 512;
++   return DISK_CACHE_FILE_BYTES(sb);
+ }
+ 
+ /* Is entry a directory with a two-character name, (and not the
+@@ -660,6 +747,7 @@
  
     if (size) {
        p_atomic_add(cache->size, - (uint64_t)size);
@@ -184,7 +239,7 @@
        return;
     }
  
-@@ -682,6 +743,7 @@
+@@ -682,6 +770,7 @@
  
     if (size)
        p_atomic_add(cache->size, - (uint64_t)size);
@@ -192,15 +247,19 @@
  }
  
  void
-@@ -704,6 +766,7 @@
+@@ -702,8 +791,9 @@
+    unlink(filename);
+    free(filename);
  
-    if (sb.st_blocks)
-       p_atomic_add(cache->size, - (uint64_t)sb.st_blocks * 512);
+-   if (sb.st_blocks)
+-      p_atomic_add(cache->size, - (uint64_t)sb.st_blocks * 512);
++   if (DISK_CACHE_FILE_BYTES(sb))
++      p_atomic_add(cache->size, - DISK_CACHE_FILE_BYTES(sb));
 +      index_size_written(cache);
  }
  
  static ssize_t
-@@ -942,7 +1005,10 @@
+@@ -942,7 +1032,10 @@
      * open with the flock held. So just let that file be responsible
      * for writing the file.
      */
@@ -212,12 +271,32 @@
     err = flock(fd, LOCK_EX | LOCK_NB);
  #else
     struct flock lock = {
-@@ -1051,6 +1117,8 @@
+@@ -1049,7 +1142,9 @@
+       goto done;
+    }
  
-    p_atomic_add(dc_job->cache->size, sb.st_blocks * 512);
- 
-+   index_size_written(dc_job->cache);
+-   p_atomic_add(dc_job->cache->size, sb.st_blocks * 512);
++   p_atomic_add(dc_job->cache->size, DISK_CACHE_FILE_BYTES(sb));
 +
++   index_size_written(dc_job->cache);
+ 
   done:
     if (fd_final != -1)
-       close(fd_final);
+@@ -1080,9 +1175,17 @@
+       create_put_job(cache, key, data, size, cache_item_metadata);
+ 
+    if (dc_job) {
++#ifdef __SWITCH__
++      /* (written here, not by a thread of the cache's: one could still be
++       * writing to the SD card when the process's services close, and it
++       * held the card's file system while the game read from it) */
++      cache_put(dc_job, 0);
++      destroy_put_job(dc_job, 0);
++#else
+       util_queue_fence_init(&dc_job->fence);
+       util_queue_add_job(&cache->cache_queue, dc_job, &dc_job->fence,
+                          cache_put, destroy_put_job, dc_job->size);
++#endif
+    }
+ }
+ 
