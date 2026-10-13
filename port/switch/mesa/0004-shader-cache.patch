@@ -12,24 +12,26 @@
      endif
 --- a/src/util/disk_cache.h
 +++ b/src/util/disk_cache.h
-@@ -120,6 +120,17 @@
+@@ -138,8 +138,19 @@
+ static inline bool
+ disk_cache_get_function_identifier(void *ptr, struct mesa_sha1 *ctx)
  {
-    uint32_t timestamp;
- 
 +#ifdef __SWITCH__
-+   /* a static program has no build id or file to date: the driver's
-+    * version and when this was compiled, so that a rebuilt Mesa does not
-+    * use another's shaders */
++   /* (no dladdr: a static program has no build id or file to date) the
++    * driver's version and when this was compiled, so that a rebuilt Mesa
++    * does not use another's shaders */
 +   static const char identity[] = PACKAGE_VERSION " " __DATE__ " " __TIME__;
 +
 +   (void)ptr;
-+   (void)timestamp;
 +   _mesa_sha1_update(ctx, identity, sizeof(identity));
 +   return true;
++#else
+    return false;
+ #endif
 +#endif
- #ifdef HAVE_DL_ITERATE_PHDR
-    const struct build_id_note *note = NULL;
-    if ((note = build_id_find_nhdr_for_addr(ptr))) {
+ }
+ 
+ /* Provide inlined stub functions if the shader cache is disabled. */
 --- a/src/util/disk_cache.c
 +++ b/src/util/disk_cache.c
 @@ -31,10 +31,14 @@
@@ -71,7 +73,19 @@
     /* Maximum size of all cached objects (in bytes). */
     uint64_t max_size;
  
-@@ -259,6 +273,11 @@
+@@ -210,9 +224,11 @@
+    uint8_t cache_version = CACHE_VERSION;
+    size_t cv_size = sizeof(cache_version);
+ 
++#ifndef __SWITCH__
+    /* If running as a users other than the real user disable cache */
+    if (geteuid() != getuid())
+       return NULL;
++#endif
+ 
+    /* A ralloc context for transient data during this invocation. */
+    local = ralloc_context(NULL);
+@@ -259,6 +275,11 @@
        }
     }
  
@@ -83,7 +97,7 @@
     if (path == NULL) {
        char *buf;
        size_t buf_size;
-@@ -293,6 +312,7 @@
+@@ -293,6 +314,7 @@
        if (path == NULL)
           goto path_fail;
     }
@@ -91,7 +105,7 @@
  
     cache->path = ralloc_strdup(cache, path);
     if (cache->path == NULL)
-@@ -331,10 +351,19 @@
+@@ -331,10 +353,19 @@
      * guarantees of the cryptographic hash, a corrupt entry is
      * unlikely to ever match a real cache key).
      */
@@ -111,7 +125,7 @@
     cache->index_mmap_size = size;
  
     cache->size = (uint64_t *) cache->index_mmap;
-@@ -442,13 +471,32 @@
+@@ -442,13 +473,32 @@
     return NULL;
  }
  
@@ -144,7 +158,7 @@
     }
  
     ralloc_free(cache);
-@@ -531,7 +579,17 @@
+@@ -531,7 +581,17 @@
           break;
  
        struct stat sb;
@@ -162,7 +176,7 @@
           if (!lru_atime || (sb.st_atime < lru_atime)) {
              size_t len = strlen(entry->d_name);
  
-@@ -660,6 +718,7 @@
+@@ -660,6 +720,7 @@
  
     if (size) {
        p_atomic_add(cache->size, - (uint64_t)size);
@@ -170,7 +184,7 @@
        return;
     }
  
-@@ -682,6 +741,7 @@
+@@ -682,6 +743,7 @@
  
     if (size)
        p_atomic_add(cache->size, - (uint64_t)size);
@@ -178,7 +192,7 @@
  }
  
  void
-@@ -704,6 +764,7 @@
+@@ -704,6 +766,7 @@
  
     if (sb.st_blocks)
        p_atomic_add(cache->size, - (uint64_t)sb.st_blocks * 512);
@@ -186,7 +200,7 @@
  }
  
  static ssize_t
-@@ -942,7 +1003,10 @@
+@@ -942,7 +1005,10 @@
      * open with the flock held. So just let that file be responsible
      * for writing the file.
      */
@@ -198,7 +212,7 @@
     err = flock(fd, LOCK_EX | LOCK_NB);
  #else
     struct flock lock = {
-@@ -1051,6 +1115,8 @@
+@@ -1051,6 +1117,8 @@
  
     p_atomic_add(dc_job->cache->size, sb.st_blocks * 512);
  

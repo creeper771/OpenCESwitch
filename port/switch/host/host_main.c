@@ -317,6 +317,8 @@ int main(int argc, char **argv)
 	mkdir("sdmc:" HOST_DATA_ROOT, 0777);
 	mkdir("sdmc:" HOST_SAVE_ROOT, 0777);
 	log_file = fopen(HOST_LOG_PATH, "w");
+	/* what libraries report there (Mesa's warnings, its shader cache's) */
+	freopen(HOST_STDERR_PATH, "w", stderr);
 	host_logf(HOST_LOG_INFO, "OpenCE for the Switch (bring-up host)");
 
 	type = appletGetAppletType();

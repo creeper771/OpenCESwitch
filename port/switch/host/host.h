@@ -34,6 +34,8 @@ Android, with Horizon's calls:
 #define HOST_SAVE_ROOT "/switch/opence/save"
 /* the host's own log, beside the guest's debug.txt */
 #define HOST_LOG_PATH "sdmc:/switch/opence/host.txt"
+/* the host's standard error, which libraries write to */
+#define HOST_STDERR_PATH "sdmc:/switch/opence/stderr.txt"
 
 #define GUEST(type, value) ((type)(uintptr_t)(uint32_t)(value))
 
