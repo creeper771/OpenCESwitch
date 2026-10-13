@@ -11,6 +11,7 @@ again, as devkitPro does, with this folder's patches:
 | `0001-newlib-timespec_get.patch` | Builds with today's newlib, which has its own `timespec_get` |
 | `0002-glthread.patch` | Gives contexts their GL thread hooks again (devkitPro's patch leaves `start_thread` and `thread_finish` out on the Switch), gives the GL thread the `set_background_context` it needs, starts it when `mesa_glthread=true` is in the environment (as DRI does for its option), drains it before a context is changed, and moves it to its own core (`mesa_glthread_core`, 1 by default) |
 | `0003-thread-stack.patch` | Gives Mesa's threads a 4 MB stack: one made with `thrd_create` gets libnx's small default stack, taken from the heap, and the GL thread, which runs the GLSL compiler, ran off its end and broke the heap (the game crashed in `malloc` as it set up its renderer) |
+| `0004-shader-cache.patch` | Mesa's shader cache on the Switch, which devkitPro's build turns off there: its index read into memory (Horizon has no shared file mapping) with only the cache's size written back, no locks (one process), no home directory (only `MESA_GLSL_CACHE_DIR`), `stat` for newlib's missing `fstatat`, and an identity of Mesa's version and build time for a static program |
 
 Nothing of Mesa is kept in the repository: the script downloads Mesa
 20.1.0-rc3 and devkitPro's recipe (`switch/mesa` of
@@ -37,6 +38,12 @@ make -C port/switch/host                # links it when it is there
 (into `build/switch/mesa/src`), for writing a new patch.
 
 ## Using it
+
+The host sets `MESA_GLSL_CACHE_DIR` to `sdmc:/switch/opence/shader_cache`
+(at most 256 MB) before EGL starts, so that a shader compiled once (the
+GLSL front end's work, which ran on the game's main thread) is read back
+in later runs; an empty file `sdmc:/switch/opence/no_shader_cache` turns
+it off. It links zlib, which the cache compresses with.
 
 The host (`port/switch/host/host_gl.c`) sets `mesa_glthread=true` before it
 makes the game's context, and then writes the renderer's vertices with

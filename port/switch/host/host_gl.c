@@ -26,6 +26,7 @@ host_gl_wait_frame and host_gl_buffer_write are the Android host's
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -73,6 +74,8 @@ queue, each frame's vertices, about 5 MB, filled it and made the campaign
 slower than without it.) */
 static int glthread;
 #define NO_GLTHREAD_PATH "sdmc:/switch/opence/no_glthread"
+#define SHADER_CACHE_PATH "sdmc:/switch/opence/shader_cache"
+#define NO_SHADER_CACHE_PATH "sdmc:/switch/opence/no_shader_cache"
 /* under the GL thread, glBufferSubData is queued without waiting for the
 thread only below this size (Mesa's MARSHAL_MAX_CMD_SIZE, less its command) */
 #define QUEUED_WRITE_BYTES 8000u
@@ -150,6 +153,25 @@ static int egl_start(void)
 		return 1;
 	/* (the console drew on the window EGL now takes) */
 	host_console_close();
+	/* Mesa's shader cache on the SD card (port/switch/mesa: built with it),
+	so that a shader compiled once is not compiled again in a later run;
+	off if sdmc:/switch/opence/no_shader_cache exists */
+	{
+		FILE *flag = fopen(NO_SHADER_CACHE_PATH, "r");
+
+		if (flag)
+		{
+			fclose(flag);
+			setenv("MESA_GLSL_CACHE_DISABLE", "true", 1);
+		}
+		else
+		{
+			mkdir(SHADER_CACHE_PATH, 0777);
+			setenv("MESA_GLSL_CACHE_DIR", SHADER_CACHE_PATH, 1);
+			setenv("MESA_GLSL_CACHE_MAX_SIZE", "256M", 1);
+		}
+		host_logf(HOST_LOG_INFO, "shader cache: %s", flag ? "off" : SHADER_CACHE_PATH);
+	}
 	display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 	if (display == EGL_NO_DISPLAY || !eglInitialize(display, NULL, NULL))
 	{

@@ -1,0 +1,209 @@
+--- a/meson.build
++++ b/meson.build
+@@ -833,7 +833,8 @@
+ with_shader_cache = false
+ _shader_cache = get_option('shader-cache')
+ if _shader_cache != 'false'
+-  if ['windows','horizon'].contains(host_machine.system())
++  # (on the Switch, disk_cache.c keeps its index in memory: no shared mmap)
++  if ['windows'].contains(host_machine.system())
+     if _shader_cache == 'true'
+       error('Shader Cache does not currently work on Windows')
+     endif
+--- a/src/util/disk_cache.h
++++ b/src/util/disk_cache.h
+@@ -120,6 +120,17 @@
+ {
+    uint32_t timestamp;
+ 
++#ifdef __SWITCH__
++   /* a static program has no build id or file to date: the driver's
++    * version and when this was compiled, so that a rebuilt Mesa does not
++    * use another's shaders */
++   static const char identity[] = PACKAGE_VERSION " " __DATE__ " " __TIME__;
++
++   (void)ptr;
++   (void)timestamp;
++   _mesa_sha1_update(ctx, identity, sizeof(identity));
++   return true;
++#endif
+ #ifdef HAVE_DL_ITERATE_PHDR
+    const struct build_id_note *note = NULL;
+    if ((note = build_id_find_nhdr_for_addr(ptr))) {
+--- a/src/util/disk_cache.c
++++ b/src/util/disk_cache.c
+@@ -31,10 +31,14 @@
+ #include <sys/file.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#ifndef __SWITCH__
+ #include <sys/mman.h>
++#endif
+ #include <unistd.h>
+ #include <fcntl.h>
++#ifndef __SWITCH__
+ #include <pwd.h>
++#endif
+ #include <errno.h>
+ #include <dirent.h>
+ #include <inttypes.h>
+@@ -55,6 +59,9 @@
+ 
+ #include "disk_cache.h"
+ 
++struct disk_cache;
++static void index_size_written(struct disk_cache *cache);
++
+ /* Number of bits to mask off from a cache key to get an index. */
+ #define CACHE_INDEX_KEY_BITS 16
+ 
+@@ -102,6 +109,13 @@
+    /* Pointer to stored keys, (within index_mmap). */
+    uint8_t *stored_keys;
+ 
++#ifdef __SWITCH__
++   /* The index file. Horizon has no shared file mappings: the index is
++    * read into memory (index_mmap) and only the cache's size is written
++    * back (index_size_written); one process uses the cache. */
++   int index_fd;
++#endif
++
+    /* Maximum size of all cached objects (in bytes). */
+    uint64_t max_size;
+ 
+@@ -259,6 +273,11 @@
+       }
+    }
+ 
++#ifdef __SWITCH__
++   /* (only $MESA_GLSL_CACHE_DIR or $XDG_CACHE_HOME: there is no home) */
++   if (path == NULL)
++      goto path_fail;
++#else
+    if (path == NULL) {
+       char *buf;
+       size_t buf_size;
+@@ -293,6 +312,7 @@
+       if (path == NULL)
+          goto path_fail;
+    }
++#endif
+ 
+    cache->path = ralloc_strdup(cache, path);
+    if (cache->path == NULL)
+@@ -331,10 +351,19 @@
+     * guarantees of the cryptographic hash, a corrupt entry is
+     * unlikely to ever match a real cache key).
+     */
++#ifdef __SWITCH__
++   cache->index_mmap = ralloc_size(cache, size);
++   if (cache->index_mmap == NULL || lseek(fd, 0, SEEK_SET) != 0 ||
++       read(fd, cache->index_mmap, size) != (ssize_t)size)
++      goto path_fail;
++   cache->index_fd = fd;
++   fd = -1;
++#else
+    cache->index_mmap = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                             MAP_SHARED, fd, 0);
+    if (cache->index_mmap == MAP_FAILED)
+       goto path_fail;
++#endif
+    cache->index_mmap_size = size;
+ 
+    cache->size = (uint64_t *) cache->index_mmap;
+@@ -442,13 +471,32 @@
+    return NULL;
+ }
+ 
++/* the cache's size, after it changed, into the index file (on the Switch,
++whose index is not a shared mapping of the file) */
++static void
++index_size_written(struct disk_cache *cache)
++{
++#ifdef __SWITCH__
++   uint64_t size = *cache->size;
++
++   if (lseek(cache->index_fd, 0, SEEK_SET) == 0)
++      write(cache->index_fd, &size, sizeof(size));
++#else
++   (void)cache;
++#endif
++}
++
+ void
+ disk_cache_destroy(struct disk_cache *cache)
+ {
+    if (cache && !cache->path_init_failed) {
+       util_queue_finish(&cache->cache_queue);
+       util_queue_destroy(&cache->cache_queue);
++#ifdef __SWITCH__
++      close(cache->index_fd);
++#else
+       munmap(cache->index_mmap, cache->index_mmap_size);
++#endif
+    }
+ 
+    ralloc_free(cache);
+@@ -531,7 +579,17 @@
+          break;
+ 
+       struct stat sb;
++#ifdef __SWITCH__
++      /* (newlib has no fstatat or dirfd) */
++      char *entry_path = NULL;
++      int stat_result = asprintf(&entry_path, "%s/%s", dir_path, entry->d_name) >= 0 ?
++                        stat(entry_path, &sb) : -1;
++
++      free(entry_path);
++      if (stat_result == 0) {
++#else
+       if (fstatat(dirfd(dir), entry->d_name, &sb, 0) == 0) {
++#endif
+          if (!lru_atime || (sb.st_atime < lru_atime)) {
+             size_t len = strlen(entry->d_name);
+ 
+@@ -660,6 +718,7 @@
+ 
+    if (size) {
+       p_atomic_add(cache->size, - (uint64_t)size);
++      index_size_written(cache);
+       return;
+    }
+ 
+@@ -682,6 +741,7 @@
+ 
+    if (size)
+       p_atomic_add(cache->size, - (uint64_t)size);
++      index_size_written(cache);
+ }
+ 
+ void
+@@ -704,6 +764,7 @@
+ 
+    if (sb.st_blocks)
+       p_atomic_add(cache->size, - (uint64_t)sb.st_blocks * 512);
++      index_size_written(cache);
+ }
+ 
+ static ssize_t
+@@ -942,7 +1003,10 @@
+     * open with the flock held. So just let that file be responsible
+     * for writing the file.
+     */
+-#ifdef HAVE_FLOCK
++#if defined(__SWITCH__)
++   /* (one process uses the cache) */
++   err = 0;
++#elif defined(HAVE_FLOCK)
+    err = flock(fd, LOCK_EX | LOCK_NB);
+ #else
+    struct flock lock = {
+@@ -1051,6 +1115,8 @@
+ 
+    p_atomic_add(dc_job->cache->size, sb.st_blocks * 512);
+ 
++   index_size_written(dc_job->cache);
++
+  done:
+    if (fd_final != -1)
+       close(fd_final);
