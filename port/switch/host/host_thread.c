@@ -29,8 +29,13 @@ runs until it blocks. On cores 0 to 2 this priority alone is preemptive
 (libnx's threadCreate), so the guest's threads take turns as on a desktop,
 where the game's loops that poll another thread expect it. */
 #define THREAD_PRIORITY 0x3b
-/* the cores an application may use */
-#define CORE_COUNT 3
+/* The cores an application may use are 0 to 2. The game's main thread
+has core 0 to itself (it is where the frame is made, and each thread of a
+higher priority there took its time from it): every other thread of the
+guest's, and the host's that run guest code (the sound's), take turns on
+cores 1 and 2, with Mesa's (port/switch/mesa). */
+#define FIRST_OTHER_CORE 1
+#define OTHER_CORE_COUNT 2
 
 struct guest_thread_start
 {
@@ -92,6 +97,8 @@ int host_run_guest_main(uint32_t boot)
 	if (!stack)
 		host_fatal("cannot allocate the guest's main stack");
 	main_thread = threadGetCurHandle();
+	/* (core 0, which no other thread of the game's is given) */
+	svcSetThreadCoreMask(CUR_THREAD_HANDLE, 0, 1u << 0);
 	svcSetThreadPriority(CUR_THREAD_HANDLE, THREAD_PRIORITY);
 	host_profile_start();
 	host_logf(HOST_LOG_INFO, "starting the guest (stack %08llx)", (unsigned long long)(uintptr_t)stack);
@@ -218,8 +225,8 @@ static int thread_create(uint32_t guest_thread, void (*host_function)(void *), v
 
 	mutexLock(&threads_lock);
 	reap_threads();
-	core = next_core;
-	next_core = (next_core + 1) % CORE_COUNT;
+	core = FIRST_OTHER_CORE + next_core;
+	next_core = (next_core + 1) % OTHER_CORE_COUNT;
 	rc = threadCreate(&start->thread, native_thread_main, start, NULL, NATIVE_STACK_SIZE, priority, core);
 	if (R_SUCCEEDED(rc))
 	{

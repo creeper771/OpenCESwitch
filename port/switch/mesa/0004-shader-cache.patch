@@ -259,7 +259,21 @@
  }
  
  static ssize_t
-@@ -942,7 +1032,10 @@
+@@ -781,7 +871,13 @@
+    strm.next_in = (uint8_t *) in_data;
+    strm.avail_in = in_data_size;
+ 
++#ifdef __SWITCH__
++   /* (entries are written as their shaders are compiled, on the
++    * application's thread: the quickest compression, not the smallest) */
++   int ret = deflateInit(&strm, Z_BEST_SPEED);
++#else
+    int ret = deflateInit(&strm, Z_BEST_COMPRESSION);
++#endif
+    if (ret != Z_OK)
+        return 0;
+ 
+@@ -942,7 +1038,10 @@
      * open with the flock held. So just let that file be responsible
      * for writing the file.
      */
@@ -271,7 +285,7 @@
     err = flock(fd, LOCK_EX | LOCK_NB);
  #else
     struct flock lock = {
-@@ -1049,7 +1142,9 @@
+@@ -1049,7 +1148,9 @@
        goto done;
     }
  
@@ -282,7 +296,7 @@
  
   done:
     if (fd_final != -1)
-@@ -1080,9 +1175,17 @@
+@@ -1080,9 +1181,17 @@
        create_put_job(cache, key, data, size, cache_item_metadata);
  
     if (dc_job) {

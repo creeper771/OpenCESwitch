@@ -1032,16 +1032,46 @@ static struct
 } art[MAXIMUM_ART];
 static long art_count;
 
+/* art's indices by the address of their bitmap's data, plus one (0: none),
+open-addressed: menu_art_texture is asked of every texture the game binds,
+each frame, and a search of art took 2% of the Switch's main thread in a
+level, where none of it is drawn */
+#define ART_SLOTS (MAXIMUM_ART * 2)
+static unsigned short art_slots[ART_SLOTS];
+
+static unsigned long art_slot(unsigned long data)
+{
+	return (unsigned long)((data >> 4) * 2654435761UL) % ART_SLOTS;
+}
+
+/* the index of the art of a bitmap's data, or art_count */
+static long art_find(unsigned long data)
+{
+	unsigned long slot = art_slot(data), probe;
+
+	for (probe = 0; probe < ART_SLOTS && art_slots[slot]; probe++)
+	{
+		if (art[art_slots[slot] - 1].data == data)
+			return art_slots[slot] - 1;
+		slot = (slot + 1) % ART_SLOTS;
+	}
+	return art_count;
+}
+
+static void art_slot_add(long index)
+{
+	unsigned long slot = art_slot(art[index].data);
+
+	while (art_slots[slot])
+		slot = (slot + 1) % ART_SLOTS;
+	art_slots[slot] = (unsigned short)(index + 1);
+}
+
 void halo_menus_art_register(void const *texture, char const *png)
 {
 	unsigned long data = ((const unsigned long *)texture)[1];
-	long index;
+	long index = art_find(data);
 
-	for (index = 0; index < art_count; index++)
-	{
-		if (art[index].data == data)
-			break;
-	}
 	if (index == art_count)
 	{
 		if (art_count == MAXIMUM_ART)
@@ -1050,6 +1080,8 @@ void halo_menus_art_register(void const *texture, char const *png)
 			return;
 		}
 		art_count++;
+		art[index].data = data;
+		art_slot_add(index);
 	}
 	else if (art[index].png && !strcmp(art[index].png, png))
 	{
@@ -1077,17 +1109,13 @@ void halo_menus_art_forget(void)
 			glDeleteTextures(1, &art[index].texture);
 	}
 	art_count = 0;
+	memset(art_slots, 0, sizeof(art_slots));
 }
 
 unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 {
-	long index;
+	long index = art_find(data);
 
-	for (index = 0; index < art_count; index++)
-	{
-		if (art[index].data == data)
-			break;
-	}
 	/* (no png: out of memory registering it) */
 	if (index == art_count || art[index].failed || !art[index].png)
 		return 0;
