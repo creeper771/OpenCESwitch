@@ -24,7 +24,9 @@ CC      := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-gcc
 CXX     := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-g++
 
 ARCH    := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
-CFLAGS  := -g -O2 -std=gnu11 -Wall -Wextra -ffunction-sections $(ARCH) -D__SWITCH__ \
+# (stable textures' pages are hashed every 16th frame, not every 4th: an
+# unannounced write to one is seen up to that late; host_watch_hash.h)
+CFLAGS  := -g -O2 -std=gnu11 -Wall -Wextra -ffunction-sections $(ARCH) -D__SWITCH__ -DWATCH_HASH_STABLE_FRAMES=16u \
 	-I. -I$(LIBNX)/include $(MESA_FLAGS) -I$(PORTLIBS)/include -I$(ROOT)/port/android/include
 
 LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) $(MESA_LIBS) -L$(PORTLIBS)/lib -L$(LIBNX)/lib

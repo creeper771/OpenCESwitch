@@ -25,9 +25,12 @@ supported: opening one fails, as on a machine without a microphone.
 #define SDL_AUDIO_F32 0x8120
 #define RATE 48000
 #define CHANNELS 2
-/* frames per audout buffer (about 21 ms), as the Android host asks of SDL */
-#define FRAMES 1024
-#define BUFFER_COUNT 3
+/* frames per audout buffer (about 11 ms), and buffers queued (about 64 ms
+in all). The game's mixer holds its lock over the whole buffer, and the
+game's main thread waited on that lock (dsound_begin_scene) 2.7% of its
+time with 1024-frame buffers: smaller ones keep it shorter. */
+#define FRAMES 512
+#define BUFFER_COUNT 6
 #define BUFFER_BYTES ((FRAMES * CHANNELS * sizeof(int16_t) + 0xfff) & ~(size_t)0xfff)
 #define STREAM_COUNT 4
 #define AUDIO_STACK_SIZE (256 * 1024)

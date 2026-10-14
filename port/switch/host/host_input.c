@@ -16,6 +16,13 @@ A controller that connects or disconnects is announced as SDL's
 SDL_EVENT_GAMEPAD_ADDED or _REMOVED (host_sdl_poll_event), on which the
 game opens it. Rumble is HD Rumble at two fixed frequencies.
 
+Holding - and + together for a second opens the system's controller
+screen (the controller support applet), where players can connect
+controllers and take a Joy-Con each, held sideways: such a Joy-Con is a
+player of its own, its SL and SR the triggers (fire and grenade), as it has
+no ZL or ZR within reach. The game does not see - and + while both are
+held.
+
 There are no touch controls yet: the Android touch functions report none.
 */
 
@@ -26,6 +33,9 @@ There are no touch controls yet: the Android touch functions report none.
 #define PORT_COUNT 4
 /* the pads are read at most this often (nanoseconds) */
 #define UPDATE_INTERVAL 2000000ULL
+/* how long - and + are held to open the controller screen (nanoseconds) */
+#define CONTROLLER_SCREEN_HOLD 1000000000ULL
+#define SCREEN_BUTTONS (HidNpadButton_Minus | HidNpadButton_Plus)
 
 /* SDL3's values (SDL_events.h, SDL_gamepad.h) */
 #define SDL_EVENT_GAMEPAD_ADDED 0x653
@@ -57,6 +67,9 @@ struct pad
 	int vibration_count;
 	uint32_t vibration_style;
 	uint64_t rumble_until;
+	/* since when - and + are held together (0: they are not) */
+	uint64_t screen_held_since;
+	int screen_opened;
 };
 
 /* SDL's buttons, in their order, as HidNpadButton masks */
@@ -83,6 +96,7 @@ static struct pad pads[PORT_COUNT];
 static Mutex input_lock;
 static uint64_t last_update;
 static int input_ready;
+static volatile int controller_screen_wanted;
 
 static void input_start(void)
 {
@@ -91,6 +105,8 @@ static void input_start(void)
 	if (input_ready)
 		return;
 	padConfigureInput(PORT_COUNT, HidNpadStyleSet_NpadStandard);
+	/* (a Joy-Con taken on its own is held sideways) */
+	hidSetNpadJoyHoldType(HidNpadJoyHoldType_Horizontal);
 	for (index = 0; index < PORT_COUNT; index++)
 	{
 		pads[index].id = (HidNpadIdType)(HidNpadIdType_No1 + index);
@@ -175,6 +191,31 @@ static void pads_update(void)
 		padUpdate(&pad->state);
 		pad->connected = padIsConnected(&pad->state);
 		pad->buttons = pad->connected ? padGetButtons(&pad->state) : 0;
+		/* a single Joy-Con's SL and SR as the triggers */
+		if (padGetStyleSet(&pad->state) & (HidNpadStyleTag_NpadJoyLeft | HidNpadStyleTag_NpadJoyRight))
+		{
+			if (pad->buttons & HidNpadButton_AnySR)
+				pad->buttons |= HidNpadButton_ZR;
+			if (pad->buttons & HidNpadButton_AnySL)
+				pad->buttons |= HidNpadButton_ZL;
+		}
+		/* - and + held together: the controller screen, once a hold */
+		if ((pad->buttons & SCREEN_BUTTONS) == SCREEN_BUTTONS)
+		{
+			if (!pad->screen_held_since)
+				pad->screen_held_since = now;
+			else if (!pad->screen_opened && now - pad->screen_held_since >= CONTROLLER_SCREEN_HOLD)
+			{
+				pad->screen_opened = 1;
+				controller_screen_wanted = 1;
+			}
+			pad->buttons &= ~(uint64_t)SCREEN_BUTTONS;
+		}
+		else
+		{
+			pad->screen_held_since = 0;
+			pad->screen_opened = 0;
+		}
 		pad->sticks[0] = padGetStickPos(&pad->state, 0);
 		pad->sticks[1] = padGetStickPos(&pad->state, 1);
 		if (pad->rumble_until && now >= pad->rumble_until)
@@ -185,6 +226,28 @@ static void pads_update(void)
 	}
 }
 
+/* the system's controller screen (the game waits meanwhile): up to four
+players, single Joy-Cons allowed */
+static void controller_screen(void)
+{
+	HidLaControllerSupportArg arg;
+	HidLaControllerSupportResultInfo result;
+	Result rc;
+
+	hidLaCreateControllerSupportArg(&arg);
+	arg.hdr.player_count_min = 0;
+	arg.hdr.player_count_max = PORT_COUNT;
+	arg.hdr.enable_take_over_connection = 1;
+	arg.hdr.enable_permit_joy_dual = 1;
+	memset(&result, 0, sizeof(result));
+	host_logf(HOST_LOG_INFO, "controllers: the system's screen");
+	rc = hidLaShowControllerSupport(&result, &arg);
+	if (R_FAILED(rc))
+		host_logf(HOST_LOG_WARN, "controllers: the screen could not open: 0x%x", rc);
+	else
+		host_logf(HOST_LOG_INFO, "controllers: %d players", result.player_count);
+}
+
 /* ---------- the guest's SDL events and gamepads */
 
 /* the next event: a controller connected or gone, else none (0) */
@@ -193,6 +256,11 @@ int host_input_poll_event(void *event)
 	struct guest_gamepad_event *gamepad_event = event;
 	int index;
 
+	if (controller_screen_wanted)
+	{
+		controller_screen_wanted = 0;
+		controller_screen();
+	}
 	mutexLock(&input_lock);
 	input_start();
 	pads_update();

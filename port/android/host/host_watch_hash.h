@@ -27,7 +27,11 @@ to that many frames late.
 
 #define WATCH_HASH_PAGE_SIZE 0x1000u
 #define WATCH_HASH_STABLE_CHECKS 30u
+/* (a host may check stable pages less often: the Switch's, whose cores
+hashed them for 5% of the game's main thread) */
+#ifndef WATCH_HASH_STABLE_FRAMES
 #define WATCH_HASH_STABLE_FRAMES 4u
+#endif
 
 struct watch_hash
 {
