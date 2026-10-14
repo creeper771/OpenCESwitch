@@ -27,11 +27,15 @@ first time the game calls it.
 ## Build
 
 You need devkitPro with `switch-dev`, and what `ninja android` needs for the
-guest image (refer to `port/android/README.md`).
+guest image (refer to `port/android/README.md`), and for Mesa what
+`port/switch/mesa/README.md` lists. `--release` leaves out the game's
+assertions, which its tag and datum lookups check on every call; clang 22
+reads the PGO profile in `pgo/` (an older clang builds without it).
 
 ```sh
-python configure.py
+python configure.py --release --android-guest-cc clang-22
 ninja build/android/halo_guest.elf
+bash port/switch/mesa/build_mesa.sh    # Mesa with its GL thread and shader cache
 make -C port/switch/host        # build/switch/opence.nro
 ```
 
