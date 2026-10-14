@@ -18,7 +18,7 @@ though below 60 frames a second and with stutters. Not done yet:
 | Sound | Done (audout); no microphone |
 | Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), 852x480 drawn on the 1280x720 screen |
 | Controllers | Done: up to 4 (Joy-Con pairs, the handheld's, Pro Controllers), by Xbox position (B is the Xbox's A), with HD Rumble; no touch screen, keyboard or clipboard |
-| Speed | The campaign is below 60 frames a second and stutters |
+| Speed | The campaign is playable but below 60 frames a second in heavy scenes, where the game's own code on one core is the limit; Mesa's GL thread, persistently mapped vertex buffers and Mesa's shader cache (`port/switch/mesa`) took the driver's work and repeated shader compiles off the main thread |
 | Network, sockets | None yet: the game's network functions fail as without a network (`host_network.c`) |
 
 An import the host does not implement yet logs its name in `host.txt` the
@@ -43,7 +43,9 @@ make -C port/switch/host        # build/switch/opence.nro
 3. Start it in title takeover: hold R while starting a game, then choose it
    in the Homebrew Menu. From the Album (applet mode) there is too little
    memory, and it says so.
-4. Close it from the HOME menu.
+4. Quit it from the game's menus: the host stops the game's threads and
+   asks the system to end the application, which returns to the HOME
+   menu after a moment. (Closing it from the HOME menu works too.)
 
 The screen shows the host's log until the game opens its window.
 `sdmc:/switch/opence` then holds `host.txt` (the host's log, with a
