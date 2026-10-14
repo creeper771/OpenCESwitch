@@ -27,7 +27,7 @@ stick moves the player, and its gyroscope turns the view
 gyroscope). Its buttons stand for an Xbox controller's: the four face
 buttons (the left Joy-Con's arrows) as A, B, X and Y by position, ZR or ZL
 the right trigger (fire), R or L the left trigger (grenade), + or - start,
-the stick's click the left stick's (crouch), SL the right stick's (zoom),
+the stick's click the right stick's (zoom), SL the left stick's (crouch),
 SR white (the flashlight).
 
 There are no touch controls yet: the Android touch functions report none.
@@ -209,15 +209,15 @@ static uint64_t single_buttons(uint32_t style, uint64_t raw)
 		{HidNpadButton_Down, HidNpadButton_B}, {HidNpadButton_Right, HidNpadButton_A},
 		{HidNpadButton_Left, HidNpadButton_Y}, {HidNpadButton_Up, HidNpadButton_X},
 		{HidNpadButton_ZL, HidNpadButton_ZR}, {HidNpadButton_L, HidNpadButton_ZL},
-		{HidNpadButton_Minus, HidNpadButton_Plus}, {HidNpadButton_StickL, HidNpadButton_StickL},
-		{HidNpadButton_LeftSL, HidNpadButton_StickR}, {HidNpadButton_LeftSR, HidNpadButton_L},
+		{HidNpadButton_Minus, HidNpadButton_Plus}, {HidNpadButton_StickL, HidNpadButton_StickR},
+		{HidNpadButton_LeftSL, HidNpadButton_StickL}, {HidNpadButton_LeftSR, HidNpadButton_L},
 	}, right[] =
 	{
 		{HidNpadButton_B, HidNpadButton_B}, {HidNpadButton_A, HidNpadButton_A},
 		{HidNpadButton_Y, HidNpadButton_Y}, {HidNpadButton_X, HidNpadButton_X},
 		{HidNpadButton_ZR, HidNpadButton_ZR}, {HidNpadButton_R, HidNpadButton_ZL},
-		{HidNpadButton_Plus, HidNpadButton_Plus}, {HidNpadButton_StickR, HidNpadButton_StickL},
-		{HidNpadButton_RightSL, HidNpadButton_StickR}, {HidNpadButton_RightSR, HidNpadButton_L},
+		{HidNpadButton_Plus, HidNpadButton_Plus}, {HidNpadButton_StickR, HidNpadButton_StickR},
+		{HidNpadButton_RightSL, HidNpadButton_StickL}, {HidNpadButton_RightSR, HidNpadButton_L},
 	};
 	int left_joy_con = (style & HidNpadStyleTag_NpadJoyLeft) != 0;
 	size_t count = left_joy_con ? sizeof(left) / sizeof(left[0]) : sizeof(right) / sizeof(right[0]);
@@ -317,7 +317,7 @@ static void pads_update(void)
 			pad->buttons = single_buttons(style, pad->buttons);
 		/* the controller screen's buttons held together, once a hold (a
 		single Joy-Con's: its start and its stick's click, as mapped) */
-		screen = style ? (uint64_t)(HidNpadButton_Plus | HidNpadButton_StickL) : (uint64_t)SCREEN_BUTTONS;
+		screen = style ? (uint64_t)(HidNpadButton_Plus | HidNpadButton_StickR) : (uint64_t)SCREEN_BUTTONS;
 		if ((pad->buttons & screen) == screen)
 		{
 			if (!pad->screen_held_since)
