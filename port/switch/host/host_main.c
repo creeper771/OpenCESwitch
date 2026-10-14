@@ -283,14 +283,10 @@ static void *read_file(const char *path, size_t *size)
 
 /* ---------- main */
 
-/* libnx's own exit (its destructors and services, then the exit function) */
+/* libnx's own exit (its destructors and services, then the exit function),
+and how its applet's exit ends the process */
 void NX_NORETURN __libnx_exit(int code);
-
-static void NX_NORETURN exit_process(int code)
-{
-	(void)code;
-	svcExitProcess();
-}
+extern u32 __nx_applet_exit_mode;
 
 int main(int argc, char **argv)
 {
@@ -372,12 +368,14 @@ int main(int argc, char **argv)
 		fclose(log_file);
 	log_file = NULL;
 	mutexUnlock(&log_lock);
-	/* libnx's exit closes the applet and the other services, then calls
-	exit_process instead of returning to the homebrew loader: the Homebrew
-	Menu it would start could not set up the GPU after Mesa, and ending the
-	process without libnx's exit shows a software error. It is called
-	directly, not by returning from main, which would first run atexit's
-	functions: Mesa's waits for its threads, the GL thread among them. */
-	envSetExitFuncPtr(exit_process);
+	/* The application asks the system to end it (libnx's applet exit mode
+	1, as the Homebrew Menu's error screen does: appletExit's _appletSelfExit),
+	after libnx's own exit closes the other services, instead of returning to
+	the homebrew loader: the Homebrew Menu it would start could not set up
+	the GPU after Mesa, and ending the process itself (svcExitProcess) shows
+	a software error. libnx's exit is called directly, not by returning from
+	main, which would first run atexit's functions: Mesa's waits for its
+	threads, the GL thread among them. */
+	__nx_applet_exit_mode = 1;
 	__libnx_exit(code);
 }
