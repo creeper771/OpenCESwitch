@@ -18,7 +18,7 @@ though below 60 frames a second and with stutters. Not done yet:
 | Sound | Done (audout); no microphone |
 | Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), 852x480 drawn on the 1280x720 screen |
 | Controllers | Done: up to 4 (Joy-Con pairs, the handheld's, Pro Controllers, single Joy-Cons), by Xbox position (B is the Xbox's A), with HD Rumble; no touch screen, keyboard or clipboard |
-| Split screen | Co-op campaign (Multiplayer > CO-OP CAMPAIGN) works with two controllers, paired before OpenCE starts (HOME > Controllers): checked in 343 Guilty Spark at about 30 to 60 frames a second. Split-screen multiplayer goes through a network game's lobby, which needs the network |
+| Split screen | Co-op campaign (Multiplayer > CO-OP CAMPAIGN) works with two controllers, paired before OpenCE starts (HOME > Controllers): checked in 343 Guilty Spark at about 35 to 60 frames a second (45 most of the time). Split-screen multiplayer goes through a network game's lobby, which needs the network |
 | Speed | The campaign is playable but below 60 frames a second in heavy scenes, where the game's own code on one core is the limit; Mesa's GL thread, persistently mapped vertex buffers and Mesa's shader cache (`port/switch/mesa`) took the driver's work and repeated shader compiles off the main thread |
 | Network, sockets | None yet: the game's network functions fail as without a network (`host_network.c`) |
 
