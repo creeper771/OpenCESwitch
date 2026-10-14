@@ -140,5 +140,10 @@ void host_touch_scene(int scene);
 /* the game control on each of the 16 controller buttons (touch_game.c),
 for the overlay's labels */
 void host_touch_bindings(const int *controls);
+/* a controller's own gyroscope: its turn since the last call (yaw, pitch),
+in the unit host_touch_look_read gives the phone's (the turn in radians
+over 0.0022); the gamepad is the game's index of it. Nothing where the host
+reads no controller's gyroscope (Android, for now). */
+void host_gamepad_gyro_read(int gamepad, float *turn);
 
 #endif

@@ -227,3 +227,12 @@ JNIEXPORT jint JNICALL Java_com_halo_decomp_TouchControls_nativeScene(JNIEnv *en
 	(void)cls;
 	return touch_scene;
 }
+
+/* the guest's: a controller's own gyroscope turn (guest_host.h), which this
+host does not read yet: none */
+void host_gamepad_gyro_read(int gamepad, float *turn)
+{
+	(void)gamepad;
+	turn[0] = 0.0f;
+	turn[1] = 0.0f;
+}

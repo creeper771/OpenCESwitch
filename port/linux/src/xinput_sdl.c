@@ -188,27 +188,57 @@ int halo_linux_touch_move(short controller_index, float *forward, float *strafe)
 #endif
 }
 
+#ifdef HALO_ARM64_GUEST
+/* port/android/guest/runtime/guest_host.h */
+void host_gamepad_gyro_read(int gamepad, float *turn);
+#endif
+
 /* the touch controls' swipe and gyroscope since the last call, in radians at
 the mouse's rate per pixel (the view applies its own sensitivity), each
 apart: player_control.c inverts the swipe as the profile inverts the stick,
 not the gyroscope, which turns as the phone does, and makes them the
-stick's rate before the magnetism. Nothing but on Android and the web. */
+stick's rate before the magnetism. Nothing but on Android and the web, and
+a controller's own gyroscope (host_gamepad_gyro_read) on Android's and the
+Switch's guest. */
 int halo_linux_touch_look(short gamepad_index, float *yaw, float *pitch, float *gyro_yaw, float *gyro_pitch)
 {
+	int looked = FALSE;
+
 	*yaw = 0.0f;
 	*pitch = 0.0f;
 	*gyro_yaw = 0.0f;
 	*gyro_pitch = 0.0f;
+#ifdef HALO_ARM64_GUEST
+	/* (a controller's own gyroscope, any player's, as the host reads it: on
+	the Switch, a Joy-Con played on its own; turned as the gyroscope of
+	the touch controls is) */
+	{
+		float turn[2];
+
+		host_gamepad_gyro_read(gamepad_index, turn);
+		*gyro_yaw -= turn[0] * 0.0022f;
+		*gyro_pitch -= turn[1] * 0.0022f;
+		looked = turn[0] != 0.0f || turn[1] != 0.0f;
+	}
+#endif
 	if (gamepad_index != 0)
-		return FALSE;
+		return looked;
 #if defined(HALO_ANDROID) || defined(HALO_WEB)
-	touch_input_look(0.0022f, yaw, pitch, gyro_yaw, gyro_pitch);
-	if (*yaw == 0.0f && *pitch == 0.0f && *gyro_yaw == 0.0f && *gyro_pitch == 0.0f)
-		return FALSE;
-	touch_used();
-	return TRUE;
+	{
+		float touch[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+		touch_input_look(0.0022f, &touch[0], &touch[1], &touch[2], &touch[3]);
+		if (touch[0] == 0.0f && touch[1] == 0.0f && touch[2] == 0.0f && touch[3] == 0.0f)
+			return looked;
+		*yaw += touch[0];
+		*pitch += touch[1];
+		*gyro_yaw += touch[2];
+		*gyro_pitch += touch[3];
+		touch_used();
+		return TRUE;
+	}
 #else
-	return FALSE;
+	return looked;
 #endif
 }
 
