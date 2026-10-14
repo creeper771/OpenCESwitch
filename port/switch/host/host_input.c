@@ -16,10 +16,11 @@ A controller that connects or disconnects is announced as SDL's
 SDL_EVENT_GAMEPAD_ADDED or _REMOVED (host_sdl_poll_event), on which the
 game opens it. Rumble is HD Rumble at two fixed frequencies.
 
-Holding - and + together for a second (on a Joy-Con of its own: its - or
-+ and a click of its stick) opens the system's controller screen (the
-controller support applet), where players can connect controllers and take
-a Joy-Con each. The game does not see those buttons while they are held.
+Holding - and + together for a second opens the system's controller
+screen (the controller support applet), where players can connect
+controllers, take a Joy-Con each or join two again; with Joy-Cons of their
+own, two players hold their - or + at once, or one holds its - or + and
+clicks its stick. The game does not see those buttons while they are held.
 
 A Joy-Con played on its own is held upright, as half of a pair is: its
 stick moves the player, and its gyroscope turns the view
@@ -28,13 +29,17 @@ gyroscope). Its buttons stand for an Xbox controller's: the four face
 buttons (the left Joy-Con's arrows) as A, B, X and Y by position, ZR or ZL
 the right trigger (fire), R or L the left trigger (grenade), + or - start,
 the stick's click the right stick's (zoom), SL the left stick's (crouch),
-SR white (the flashlight).
+SR white (the flashlight) when tapped; while SR is held, the gyroscope is
+let go, so that the Joy-Con can be brought back without turning the view.
+The gyroscope turns the view faster than the Joy-Con turns, and the faster
+it is turned the more (gyro_gain).
 
 There are no touch controls yet: the Android touch functions report none.
 */
 
 #include "host.h"
 
+#include <math.h>
 #include <string.h>
 
 #define PORT_COUNT 4
@@ -47,7 +52,16 @@ There are no touch controls yet: the Android touch functions report none.
 /* the gyroscope: its rate below this (revolutions a second) is taken as
 the hand's stillness, not a turn; and the turn's scale */
 #define GYRO_DEAD_ZONE 0.004f
-#define GYRO_SENSITIVITY 1.0f
+/* the gain of a slow turn and of a quick one, and the rates (revolutions
+a second) between which it rises */
+#define GYRO_SLOW_GAIN 1.5f
+#define GYRO_FAST_GAIN 4.0f
+#define GYRO_SLOW_RATE 0.05f
+#define GYRO_FAST_RATE 0.55f
+/* SR held longer than this lets the gyroscope go; shorter, it is a tap of
+white (the flashlight), which the game is given this long */
+#define RATCHET_HOLD 250000000ULL
+#define TAP_LENGTH 100000000ULL
 /* the guest's unit of a turn (xinput_sdl.c): radians over this */
 #define GYRO_RADIANS_PER_UNIT 0.0022f
 #define TWO_PI 6.28318530718f
@@ -92,6 +106,11 @@ struct pad
 	HidSixAxisSensorHandle six_axis;
 	uint64_t six_axis_sample;
 	float turn[2];
+	/* SR: since when it is held (0: it is not), whether that let the
+	gyroscope go, and until when its tap is white for the game */
+	uint64_t sr_since;
+	int ratchet;
+	uint64_t white_until;
 };
 
 /* SDL's buttons, in their order, as HidNpadButton masks */
@@ -119,6 +138,9 @@ static Mutex input_lock;
 static uint64_t last_update;
 static int input_ready;
 static volatile int controller_screen_wanted;
+/* since when two single Joy-Cons' start is held (0: it is not) */
+static uint64_t starts_since;
+static int starts_opened;
 
 static void input_start(void)
 {
@@ -210,14 +232,14 @@ static uint64_t single_buttons(uint32_t style, uint64_t raw)
 		{HidNpadButton_Left, HidNpadButton_Y}, {HidNpadButton_Up, HidNpadButton_X},
 		{HidNpadButton_ZL, HidNpadButton_ZR}, {HidNpadButton_L, HidNpadButton_ZL},
 		{HidNpadButton_Minus, HidNpadButton_Plus}, {HidNpadButton_StickL, HidNpadButton_StickR},
-		{HidNpadButton_LeftSL, HidNpadButton_StickL}, {HidNpadButton_LeftSR, HidNpadButton_L},
+		{HidNpadButton_LeftSL, HidNpadButton_StickL},
 	}, right[] =
 	{
 		{HidNpadButton_B, HidNpadButton_B}, {HidNpadButton_A, HidNpadButton_A},
 		{HidNpadButton_Y, HidNpadButton_Y}, {HidNpadButton_X, HidNpadButton_X},
 		{HidNpadButton_ZR, HidNpadButton_ZR}, {HidNpadButton_R, HidNpadButton_ZL},
 		{HidNpadButton_Plus, HidNpadButton_Plus}, {HidNpadButton_StickR, HidNpadButton_StickR},
-		{HidNpadButton_RightSL, HidNpadButton_StickL}, {HidNpadButton_RightSR, HidNpadButton_L},
+		{HidNpadButton_RightSL, HidNpadButton_StickL},
 	};
 	int left_joy_con = (style & HidNpadStyleTag_NpadJoyLeft) != 0;
 	size_t count = left_joy_con ? sizeof(left) / sizeof(left[0]) : sizeof(right) / sizeof(right[0]);
@@ -230,6 +252,37 @@ static uint64_t single_buttons(uint32_t style, uint64_t raw)
 			buttons |= left_joy_con ? left[index].to : right[index].to;
 	}
 	return buttons;
+}
+
+/* the gyroscope's gain at a rate (revolutions a second): GYRO_SLOW_GAIN for
+a careful aim, rising to GYRO_FAST_GAIN for a quick turn */
+static float gyro_gain(float rate)
+{
+	float rise = (rate - GYRO_SLOW_RATE) / (GYRO_FAST_RATE - GYRO_SLOW_RATE);
+
+	rise = rise < 0.0f ? 0.0f : rise > 1.0f ? 1.0f : rise;
+	return GYRO_SLOW_GAIN + (GYRO_FAST_GAIN - GYRO_SLOW_GAIN) * rise;
+}
+
+/* SR of a single Joy-Con: held, it lets the gyroscope go; tapped, it is
+white for TAP_LENGTH */
+static void pad_ratchet_update(struct pad *pad, uint64_t raw, uint64_t now)
+{
+	if (raw & HidNpadButton_AnySR)
+	{
+		if (!pad->sr_since)
+			pad->sr_since = now;
+		pad->ratchet = now - pad->sr_since >= RATCHET_HOLD;
+	}
+	else
+	{
+		if (pad->sr_since && !pad->ratchet)
+			pad->white_until = now + TAP_LENGTH;
+		pad->sr_since = 0;
+		pad->ratchet = 0;
+	}
+	if (now < pad->white_until)
+		pad->buttons |= HidNpadButton_L;
 }
 
 /* starts or stops the gyroscope of a pad that is or is no longer a single
@@ -275,17 +328,21 @@ static void pad_gyro_update(struct pad *pad, uint32_t style)
 		const HidSixAxisSensorState *state = &states[index];
 		float seconds = (float)state->delta_time / 1000000000.0f;
 		float yaw = state->angular_velocity.z, pitch = state->angular_velocity.x;
+		float gain;
 
 		if (state->sampling_number <= pad->six_axis_sample || seconds <= 0.0f || seconds > 0.1f)
+			continue;
+		if (pad->ratchet)
 			continue;
 		if (yaw > -GYRO_DEAD_ZONE && yaw < GYRO_DEAD_ZONE)
 			yaw = 0.0f;
 		if (pitch > -GYRO_DEAD_ZONE && pitch < GYRO_DEAD_ZONE)
 			pitch = 0.0f;
+		gain = gyro_gain(sqrtf(yaw * yaw + pitch * pitch));
 		/* (as the touch controls' gyroscope: the turn negated, over the
 		guest's unit) */
-		pad->turn[0] -= yaw * TWO_PI * seconds * GYRO_SENSITIVITY / GYRO_RADIANS_PER_UNIT;
-		pad->turn[1] -= pitch * TWO_PI * seconds * GYRO_SENSITIVITY / GYRO_RADIANS_PER_UNIT;
+		pad->turn[0] -= yaw * TWO_PI * seconds * gain / GYRO_RADIANS_PER_UNIT;
+		pad->turn[1] -= pitch * TWO_PI * seconds * gain / GYRO_RADIANS_PER_UNIT;
 	}
 	pad->six_axis_sample = newest;
 }
@@ -294,9 +351,9 @@ static void pad_gyro_update(struct pad *pad, uint32_t style)
 static void pads_update(void)
 {
 	uint64_t now = host_now();
-	uint64_t screen;
+	uint64_t screen, raw;
 	uint32_t style;
-	int index;
+	int index, starts_held = 0, singles = 0;
 
 	if (now - last_update < UPDATE_INTERVAL)
 		return;
@@ -312,9 +369,13 @@ static void pads_update(void)
 		/* (a single Joy-Con: one style of the two) */
 		if (style == SINGLE_STYLES)
 			style = 0;
-		pad_gyro_update(pad, style);
+		raw = pad->buttons;
 		if (style)
-			pad->buttons = single_buttons(style, pad->buttons);
+		{
+			pad->buttons = single_buttons(style, raw);
+			pad_ratchet_update(pad, raw, now);
+		}
+		pad_gyro_update(pad, style);
 		/* the controller screen's buttons held together, once a hold (a
 		single Joy-Con's: its start and its stick's click, as mapped) */
 		screen = style ? (uint64_t)(HidNpadButton_Plus | HidNpadButton_StickR) : (uint64_t)SCREEN_BUTTONS;
@@ -334,6 +395,12 @@ static void pads_update(void)
 			pad->screen_held_since = 0;
 			pad->screen_opened = 0;
 		}
+		if (style)
+		{
+			singles++;
+			if (pad->buttons & HidNpadButton_Plus)
+				starts_held++;
+		}
 		pad->sticks[0] = padGetStickPos(&pad->state, 0);
 		pad->sticks[1] = padGetStickPos(&pad->state, 1);
 		/* (a single Joy-Con's one stick moves the player: the right one's
@@ -347,6 +414,28 @@ static void pads_update(void)
 			pad->rumble_until = 0;
 			rumble_send(pad, 0.0f, 0.0f);
 		}
+	}
+	/* two players with Joy-Cons of their own holding start at once: the
+	controller screen too, as - and + held on one pair */
+	if (singles >= 2 && starts_held >= 2)
+	{
+		if (!starts_since)
+			starts_since = now;
+		else if (!starts_opened && now - starts_since >= CONTROLLER_SCREEN_HOLD)
+		{
+			starts_opened = 1;
+			controller_screen_wanted = 1;
+		}
+		for (index = 0; index < PORT_COUNT; index++)
+		{
+			if (pads[index].single_style)
+				pads[index].buttons &= ~(uint64_t)HidNpadButton_Plus;
+		}
+	}
+	else
+	{
+		starts_since = 0;
+		starts_opened = 0;
 	}
 }
 
