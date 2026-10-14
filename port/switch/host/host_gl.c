@@ -10,6 +10,13 @@ image bridges arrive here, and there is one window, the Switch's default
 host's text console draws on that window too, so it closes once the guest
 makes its context; the log then goes to host.txt only.
 
+The window's buffers are 1920x1080, and the system shows a crop of them the
+size of the display's resolution (appletGetDefaultDisplayResolution:
+1280x720 in the hand, the console's TV setting, up to 1920x1080, when
+docked), which the guest's drawable size follows: the game draws at two thirds of
+the display's lines, or display.render_height's (d3d8_gl.c). Docking or undocking
+changes it between frames (display_follow).
+
 The guest's generated OpenGL ES entry points import hostgl_<function>,
 which host_gl_resolve finds through eglGetProcAddress. host_gl_get_string,
 host_gl_has_extension, host_gl_read_buffer, host_gl_fence_frame,
@@ -28,8 +35,13 @@ host_gl_wait_frame and host_gl_buffer_write are the Android host's
 #include <string.h>
 #include <sys/stat.h>
 
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
+/* the window's buffers, and the part of them shown: the display's
+resolution, 1280x720 until it is read */
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
+static int display_width = 1280, display_height = 720;
+static Event display_changed;
+static int display_change_event;
 
 /* SDL3's SDL_GLAttr values the guest sets */
 enum
@@ -98,14 +110,55 @@ void *host_gl_resolve(const char *name)
 	return (void *)eglGetProcAddress(name);
 }
 
+/* ---------- the display's resolution */
+
+/* reads the display's resolution and shows that much of the window's
+buffers; GL draws its window's bottom left, the buffers' last rows */
+static void display_read(void)
+{
+	s32 width = 0, height = 0;
+	Result rc = appletGetDefaultDisplayResolution(&width, &height);
+
+	if (R_FAILED(rc) || width <= 0 || height <= 0)
+	{
+		host_logf(HOST_LOG_WARN, "display: no resolution (0x%x), so 1280x720", rc);
+		width = 1280;
+		height = 720;
+	}
+	if (width > WINDOW_WIDTH)
+		width = WINDOW_WIDTH;
+	if (height > WINDOW_HEIGHT)
+		height = WINDOW_HEIGHT;
+	display_width = width;
+	display_height = height;
+	rc = nwindowSetCrop(nwindowGetDefault(), 0, WINDOW_HEIGHT - height, width, WINDOW_HEIGHT);
+	host_logf(HOST_LOG_INFO, "display: %dx%d%s", width, height, R_FAILED(rc) ? " (not cropped yet)" : "");
+}
+
+/* after a frame is presented: the display's new resolution, if the console
+was docked or undocked */
+static void display_follow(void)
+{
+	if (display_change_event && R_SUCCEEDED(eventWait(&display_changed, 0)))
+	{
+		eventClear(&display_changed);
+		display_read();
+	}
+}
+
 /* ---------- the window and context (the guest's SDL video calls) */
 
 uint32_t host_sdl_create_window(const char *title, int width, int height, int64_t flags)
 {
 	(void)title;
 	(void)flags;
+	if (!window_made)
+	{
+		display_change_event = R_SUCCEEDED(appletGetDefaultDisplayResolutionChangeEvent(&display_changed));
+		display_read();
+	}
 	host_logf(HOST_LOG_INFO, "window: the game asked for %dx%d; the Switch's is %dx%d", width, height,
-		WINDOW_WIDTH, WINDOW_HEIGHT);
+		display_width, display_height);
 	window_made = 1;
 	return WINDOW_HANDLE;
 }
@@ -113,8 +166,8 @@ uint32_t host_sdl_create_window(const char *title, int width, int height, int64_
 void host_sdl_window_size_in_pixels(uint32_t window, int *width, int *height)
 {
 	(void)window;
-	*width = window_made ? WINDOW_WIDTH : 0;
-	*height = window_made ? WINDOW_HEIGHT : 0;
+	*width = window_made ? display_width : 0;
+	*height = window_made ? display_height : 0;
 }
 
 int host_sdl_set_relative_mouse(uint32_t window, int enabled)
@@ -185,6 +238,10 @@ static int egl_start(void)
 		host_logf(HOST_LOG_ERROR, "EGL has no configuration for the window: 0x%x", eglGetError());
 		return 0;
 	}
+	/* (before EGL gives the window its buffers) */
+	nwindowSetDimensions(nwindowGetDefault(), WINDOW_WIDTH, WINDOW_HEIGHT);
+	/* (the crop again, which a window of its first 1280x720 refused) */
+	display_read();
 	surface = eglCreateWindowSurface(display, config, (EGLNativeWindowType)nwindowGetDefault(), NULL);
 	if (surface == EGL_NO_SURFACE)
 	{
@@ -272,6 +329,7 @@ int host_sdl_gl_swap_window(uint32_t window)
 		}
 	}
 	result = display != EGL_NO_DISPLAY && eglSwapBuffers(display, surface);
+	display_follow();
 	HOST_ADD(swap_time, host_now() - start);
 	return result;
 }

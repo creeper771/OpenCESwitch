@@ -16,7 +16,7 @@ though below 60 frames a second and with stutters. Not done yet:
 | --- | --- |
 | Memory below 4 GB, the image, threads, files, time | Done |
 | Sound | Done (audout); no microphone |
-| Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), 852x480 drawn on the 1280x720 screen |
+| Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), on the display's 1280x720 in the hand and, docked, the TV's setting up to 1920x1080 (following docking and undocking). The game's 852x480 is drawn at 480 lines in the hand and 720 docked (two thirds of the display's), scaled up; Video Settings > Resolution (`display.render_height`) chooses 480 to 1080. Drawing the display's own lines makes the GPU the limit: docked at 1080, about 40 frames a second in the campaign against 58 at 480 |
 | Controllers | Done: up to 4 (Joy-Con pairs, the handheld's, Pro Controllers, single Joy-Cons), by Xbox position (B is the Xbox's A), with HD Rumble; no touch screen, keyboard or clipboard |
 | Split screen | Co-op campaign (Multiplayer > CO-OP CAMPAIGN) works with two controllers, paired before OpenCE starts (HOME > Controllers): checked in 343 Guilty Spark at about 35 to 60 frames a second (45 most of the time). Split-screen multiplayer goes through a network game's lobby, which needs the network |
 | Speed | The campaign is playable but below 60 frames a second in heavy scenes, where the game's own code on one core is the limit; Mesa's GL thread, persistently mapped vertex buffers and Mesa's shader cache (`port/switch/mesa`) took the driver's work and repeated shader compiles off the main thread |

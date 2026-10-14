@@ -299,6 +299,10 @@ int main(int argc, char **argv)
 		/* 480 lines at the screen's 16:9 (d3d8_gl.c), as the Android host
 		gives the display's shape */
 		"HALO_DISPLAY_WIDTH=852",
+		/* where display.render_height is 0, drawn at two thirds of the
+		display's lines (host_gl.c): 480 in the hand and 720 docked, which
+		the GPU keeps near 60 frames a second, as it does not 720 and 1080 */
+		"HALO_RENDER_HEIGHT_THIRDS=2",
 	};
 	AppletType type;
 	size_t image_size = 0;

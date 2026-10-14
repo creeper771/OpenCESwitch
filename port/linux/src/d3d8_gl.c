@@ -186,6 +186,33 @@ static void screen_mode_choose(long *width, float scale[2])
 		*width = 1600;
 	*width &= ~1L;
 	scale[0] = scale[1] = 1.0f;
+	/* display.render_height: the lines drawn, at most the display's; 0 for
+	the host's choice, HALO_RENDER_HEIGHT_THIRDS thirds of the display's
+	where it gives one (the Switch's, 2: 480 in the hand and 720 docked,
+	port/switch/host/host_main.c) and else 480, as a phone's GPU has
+	little to spare */
+	{
+		long lines = config_integer("display.render_height");
+		int display_width = 0, display_height = 0;
+
+		platform_video_drawable_size(&display_width, &display_height);
+		if (display_width > 0 && display_height > 0)
+		{
+			if (lines <= 0)
+			{
+				const char *thirds = getenv("HALO_RENDER_HEIGHT_THIRDS");
+
+				lines = thirds ? display_height * atol(thirds) / 3 : SCREEN_HEIGHT;
+			}
+			if (lines > display_height)
+				lines = display_height;
+			if (lines > 2160)
+				lines = 2160;
+			if (lines < SCREEN_HEIGHT)
+				lines = SCREEN_HEIGHT;
+			scale[0] = scale[1] = (float)lines / (float)SCREEN_HEIGHT;
+		}
+	}
 #else
 	long display_width, display_height;
 

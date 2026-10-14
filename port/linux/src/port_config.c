@@ -104,6 +104,11 @@ static const struct config_setting config_settings[] =
 	{ "display.screen_width", _config_integer, "0", "HALO_SCREEN_WIDTH", _environment_value, _platform_android,
 		"Columns of the 480-line picture: 0 for the display's shape, 640 for the\n"
 		"Xbox's 4:3." },
+	{ "display.render_height", _config_integer, "0", "HALO_RENDER_HEIGHT", _environment_value, _platform_android,
+		"The lines the picture is drawn at (480 to 2160, at most the display's):\n"
+		"0 for the device's choice: 480 on a phone, and on a Switch two thirds of\n"
+		"the display's (480 in the hand, 720 docked).\n"
+		"Fewer are faster; the picture is scaled to the display." },
 	{ "display.vsync", _config_boolean, "true", "HALO_NO_VSYNC", _environment_set_is_false, _platform_all,
 		"Wait for the display between frames; false draws as fast as possible." },
 	{ "display.max_fps", _config_integer, "0", "HALO_MAX_FPS", _environment_value, _platform_desktop,
