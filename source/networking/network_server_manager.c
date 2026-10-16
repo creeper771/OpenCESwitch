@@ -4001,8 +4001,13 @@ void network_game_server_update_countdown(
 				}
 				else
 				{
+					/* port: the host's machine alone counts down, as a game
+					starts with it alone (server_has_enough_machines), its
+					split screen players as one player: the Xbox game waited
+					for a second machine (more than one), and a host with two
+					local players and no other machine never started */
 					if (network_game_should_accept_remote_connections() == FALSE ||
-						network_game_server_get_client_machine_count(server) > 1 ||
+						network_game_server_get_client_machine_count(server) >= 1 ||
 						server_alone(server))
 					{
 						unsigned long countdown;
