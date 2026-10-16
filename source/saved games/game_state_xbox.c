@@ -102,6 +102,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "sound/sound_manager.h"
 #include <xtl.h>
+#include "game_state_writer.h" /* port: port/linux/game/game_state_writer.c */
 
 /* ---------- constants */
 
@@ -230,6 +231,8 @@ void game_state_create_or_open_file(
 		87,
 		!xbox_game_state_globals.file_open);
 
+	/* port: the writer's copy is of the file closed before */
+	game_state_writer_forget();
 	xbox_game_state_globals.handle = CreateFileA("z:\\savegame.bin",
 		GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_ALWAYS,
 		FILE_FLAG_NO_BUFFERING|FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -260,6 +263,9 @@ void game_state_close_file(
 		"c:\\halo\\SOURCE\\saved games\\game_state_xbox.c",
 		106,
 		xbox_game_state_globals.file_open);
+	/* port: the checkpoint's write finished first */
+	game_state_writer_wait();
+	game_state_writer_forget();
 	CloseHandle(xbox_game_state_globals.handle);
 	xbox_game_state_globals.file_open = FALSE;
 
@@ -281,7 +287,15 @@ boolean game_state_write_to_file(
 		121,
 		xbox_game_state_globals.file_open);
 
-	if (SetFilePointer(xbox_game_state_globals.handle, 0, NULL, FILE_BEGIN) !=
+	/* port: written on the writer's thread from a copy, so that the game
+	goes on (game_state_writer.c), where there is one */
+	if (game_state_writer_write(xbox_game_state_globals.handle, xbox_game_state_globals.buffer,
+		xbox_game_state_globals.buffer_size))
+	{
+		xbox_game_state_globals.file_valid_for_read = TRUE;
+		result = TRUE;
+	}
+	else if (SetFilePointer(xbox_game_state_globals.handle, 0, NULL, FILE_BEGIN) !=
 			INVALID_SET_FILE_POINTER &&
 		WriteFile(xbox_game_state_globals.handle, xbox_game_state_globals.buffer,
 			xbox_game_state_globals.buffer_size, &bytes_written, NULL) &&
@@ -321,6 +335,15 @@ boolean game_state_read_from_file(
 		"c:\\halo\\SOURCE\\saved games\\game_state_xbox.c",
 		146,
 		xbox_game_state_globals.file_valid_for_read || recover_saved_games_hack);
+
+	/* port: the writer's copy of what the file holds, taken without reading
+	the file (game_state_writer.c) */
+	if (game_state_writer_image(xbox_game_state_globals.buffer_size))
+	{
+		return game_state_image_accept((void *)game_state_writer_image(xbox_game_state_globals.buffer_size),
+			xbox_game_state_globals.buffer_size);
+	}
+	game_state_writer_wait();
 
 	/* port: read beside the game state, and taken once checked */
 	image = malloc(xbox_game_state_globals.buffer_size);

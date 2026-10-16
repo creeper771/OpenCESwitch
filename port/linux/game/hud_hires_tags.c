@@ -37,6 +37,7 @@ long hud_hires_asset_fits(long asset, long width, long height);
 unsigned long hud_hires_asset_sprites(long asset);
 int hud_hires_sprites_drawable(long asset, unsigned long address, unsigned long level0_size);
 void hud_hires_register_placeholder(long asset, unsigned long const *texture);
+void hud_hires_prepare(long asset);
 
 void hud_hires_tags_loaded(void);
 void hud_hires_tags_unloaded(void);
@@ -131,6 +132,7 @@ void hud_hires_tags_loaded(
 				hires_sprite_bitmaps[hires_sprite_bitmap_count].bitmap = bitmap;
 				hires_sprite_bitmaps[hires_sprite_bitmap_count].asset = asset;
 				hires_sprite_bitmap_count++;
+				hud_hires_prepare(asset);
 			}
 		}
 		else
@@ -138,6 +140,9 @@ void hud_hires_tags_loaded(
 			hires_bitmaps[hires_bitmap_count].bitmap = bitmap;
 			hires_bitmaps[hires_bitmap_count].asset = asset;
 			hires_bitmap_count++;
+			/* (decoded now, as the map loads, not where the HUD first
+			draws it, which stopped the game) */
+			hud_hires_prepare(asset);
 		}
 	}
 	platform_log("high-res hud: %ld of %ld bitmaps in this map, %ld for some of their sprites (%ld not in it)",

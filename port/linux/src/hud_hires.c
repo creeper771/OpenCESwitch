@@ -350,6 +350,18 @@ unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned
 	return texture;
 }
 
+void hud_hires_prepare(long asset)
+{
+	unsigned long levels;
+
+	if (!xgpu_gl_ready() || asset < 0 || asset >= hud_hires_asset_count() ||
+		!config_boolean(hud_hires_embedded[asset].title ? "display.high_res_text" : "display.high_res_hud"))
+	{
+		return;
+	}
+	hud_hires_override_texture(asset, &levels);
+}
+
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels)
 {
 	const struct hud_hires_embedded *embedded;
