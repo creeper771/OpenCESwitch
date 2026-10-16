@@ -62,10 +62,11 @@ long hud_hires_override_find(unsigned long address, unsigned long width, unsigne
 /* its GL texture (decoded and uploaded, mipmapped, on first use; 0 if it
 could not be), and the number of its mip levels */
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels);
-/* decodes and uploads its texture now if its setting is on and there is a GL
-context: a map's, as the map loads (port/linux/game/hud_hires_tags.c), so
-that the game does not stop to decode it where it first draws it */
-void hud_hires_prepare(long asset);
+/* decodes and uploads these textures now, those whose setting is on, where
+there is a GL context and room for them all (hud_hires.c): a map's, as the
+map loads (port/linux/game/hud_hires_tags.c), so that the game does not stop
+to decode each where it first draws it */
+void hud_hires_prepare(const long *assets, long count);
 /* a GL texture drawn from an 8-bit RGBA PNG (as the tools write them), with
 all its mip levels, and their number; 0 if it could not be */
 unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned long *levels);

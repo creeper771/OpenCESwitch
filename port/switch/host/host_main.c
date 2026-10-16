@@ -317,6 +317,9 @@ int main(int argc, char **argv)
 		display's lines (host_gl.c): 480 in the hand and 720 docked, which
 		the GPU keeps near 60 frames a second, as it does not 720 and 1080 */
 		"HALO_RENDER_HEIGHT_THIRDS=2",
+		/* a map's high-res HUD decoded as it loads, on two more cores
+		(port/linux/src/hud_hires.c): there is room for it all */
+		"HALO_HUD_PREPARE=1",
 	};
 	AppletType type;
 	size_t image_size = 0;

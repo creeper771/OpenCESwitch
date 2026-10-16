@@ -5,8 +5,9 @@ The high-res HUD's textures (hud_hires.h): which one stands for a bitmap being
 uploaded, and each one's GL texture.
 
 Which bitmap is at an address the game knows (from the loaded map's tags:
-port/linux/game/hud_hires_tags.c). Each texture is decoded from its PNG when
-first drawn and kept: up to 71 of the HUD's, about 227 MB with their mip
+port/linux/game/hud_hires_tags.c). Each texture is decoded from its PNG as
+a map that has its bitmap loads (on the desktop and the Switch:
+hud_hires_prepare), or else when first drawn, and kept: up to 71 of the HUD's, about 227 MB with their mip
 levels, though a game draws only some (the scopes' only when zoomed), and
 the titles of the menus shown, about 3 MB each (11 MB for the carnage
 report's, a whole panel), and their button icons, about 0.3 MB each (5.3
@@ -27,6 +28,7 @@ zlib (port/third_party/zlib).
 
 #include "zlib_prefixed.h"
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -326,14 +328,14 @@ failed:
 	return NULL;
 }
 
-unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned long *levels)
+/* a GL texture of the texels, mipmapped, and the number of its levels; frees
+the texels */
+static GLuint texture_upload(unsigned char *pixels, unsigned long width, unsigned long height,
+	unsigned long *levels)
 {
-	unsigned long width = 0, height = 0, largest;
-	unsigned char *pixels = png_decode(png, size, &width, &height);
+	unsigned long largest;
 	GLuint texture;
 
-	if (!pixels)
-		return 0;
 	*levels = 1;
 	for (largest = width > height ? width : height; largest > 1; largest >>= 1)
 		(*levels)++;
@@ -350,16 +352,143 @@ unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned
 	return texture;
 }
 
-void hud_hires_prepare(long asset)
+unsigned int hud_hires_png_texture(const void *png, unsigned long size, unsigned long *levels)
 {
-	unsigned long levels;
+	unsigned long width = 0, height = 0;
+	unsigned char *pixels = png_decode(png, size, &width, &height);
 
-	if (!xgpu_gl_ready() || asset < 0 || asset >= hud_hires_asset_count() ||
-		!config_boolean(hud_hires_embedded[asset].title ? "display.high_res_text" : "display.high_res_hud"))
+	return pixels ? texture_upload(pixels, width, height, levels) : 0;
+}
+
+/* ---------- preparing a map's textures
+
+As a map loads, its textures are decoded on PREPARE_THREADS threads of
+their own (the PNGs' inflating and filters, most of a load's time on a
+Switch) and uploaded on this one, in order, with no more than
+PREPARE_AHEAD decoded and waiting at once (the largest are 16 MB of
+texels). Only where all a map's textures fit beside the game: on the
+desktop, and where the host asks (HALO_HUD_PREPARE: the Switch's,
+port/switch/host/host_main.c); elsewhere (phones, browsers) each is decoded
+where it is first drawn, so that those never drawn (the scopes', unless
+zoomed) take no memory. */
+
+#define PREPARE_THREADS 2
+#define PREPARE_AHEAD 2
+
+struct prepare_job
+{
+	long asset;
+	unsigned char *pixels;
+	unsigned long width, height;
+	int done;
+};
+
+static struct
+{
+	pthread_mutex_t lock;
+	pthread_cond_t changed;
+	struct prepare_job *jobs;
+	long count, next, uploaded;
+} batch = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, NULL, 0, 0, 0 };
+
+static void prepare_decode(struct prepare_job *job)
+{
+	const struct hud_hires_embedded *embedded = &hud_hires_embedded[job->asset];
+
+	job->pixels = png_decode((const unsigned char *)embedded->png, embedded->png_size, &job->width, &job->height);
+}
+
+static void *prepare_thread(void *unused)
+{
+	(void)unused;
+	pthread_mutex_lock(&batch.lock);
+	for (;;)
 	{
-		return;
+		long index;
+
+		while (batch.next < batch.count && batch.next - batch.uploaded >= PREPARE_AHEAD + PREPARE_THREADS)
+			pthread_cond_wait(&batch.changed, &batch.lock);
+		if (batch.next >= batch.count)
+			break;
+		index = batch.next++;
+		pthread_mutex_unlock(&batch.lock);
+		prepare_decode(&batch.jobs[index]);
+		pthread_mutex_lock(&batch.lock);
+		batch.jobs[index].done = 1;
+		pthread_cond_broadcast(&batch.changed);
 	}
-	hud_hires_override_texture(asset, &levels);
+	pthread_mutex_unlock(&batch.lock);
+	return NULL;
+}
+
+void hud_hires_prepare(const long *assets, long count)
+{
+	static int wanted = -1;
+	pthread_t threads[PREPARE_THREADS];
+	int thread_count = 0;
+	long index;
+
+	if (wanted < 0)
+	{
+#ifdef HALO_GLES
+		wanted = getenv("HALO_HUD_PREPARE") != NULL;
+#else
+		wanted = 1;
+#endif
+	}
+	if (!wanted || !xgpu_gl_ready() || count <= 0)
+		return;
+	batch.jobs = calloc((size_t)count, sizeof(*batch.jobs));
+	if (!batch.jobs)
+		return;
+	batch.count = 0;
+	for (index = 0; index < count; index++)
+	{
+		long asset = assets[index];
+
+		if (asset >= 0 && asset < hud_hires_asset_count() && !textures[asset].texture && !textures[asset].failed &&
+			config_boolean(hud_hires_embedded[asset].title ? "display.high_res_text" : "display.high_res_hud"))
+		{
+			batch.jobs[batch.count++].asset = asset;
+		}
+	}
+	batch.next = batch.uploaded = 0;
+	while (thread_count < PREPARE_THREADS && thread_count < batch.count &&
+		pthread_create(&threads[thread_count], NULL, prepare_thread, NULL) == 0)
+	{
+		thread_count++;
+	}
+	for (index = 0; index < batch.count; index++)
+	{
+		struct prepare_job *job = &batch.jobs[index];
+
+		if (thread_count)
+		{
+			pthread_mutex_lock(&batch.lock);
+			while (!job->done)
+				pthread_cond_wait(&batch.changed, &batch.lock);
+			pthread_mutex_unlock(&batch.lock);
+		}
+		else
+		{
+			prepare_decode(job);
+		}
+		if (job->pixels)
+		{
+			textures[job->asset].texture = texture_upload(job->pixels, job->width, job->height,
+				&textures[job->asset].levels);
+		}
+		/* (one that cannot be decoded is tried, and logged, where it is drawn) */
+		pthread_mutex_lock(&batch.lock);
+		batch.uploaded++;
+		pthread_cond_broadcast(&batch.changed);
+		pthread_mutex_unlock(&batch.lock);
+	}
+	while (thread_count)
+		pthread_join(threads[--thread_count], NULL);
+	free(batch.jobs);
+	batch.jobs = NULL;
+	batch.count = 0;
 }
 
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels)

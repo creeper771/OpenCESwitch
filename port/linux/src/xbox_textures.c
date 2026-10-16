@@ -882,6 +882,52 @@ static unsigned long palette_hash(const D3DCOLOR *palette)
 	return hash ? hash : 1;
 }
 
+/* a palette's hash, kept for the last few palettes and found again only once
+a watched page of the palette has been written: a palettized texture's
+palette (1 KB) was hashed for every draw that bound it, though a map's
+palettes do not change */
+#define PALETTE_HASH_COUNT 8
+
+static struct
+{
+	const D3DCOLOR *palette;
+	unsigned long watch_serial;
+	unsigned long generation;
+	unsigned long hash;
+} palette_hashes[PALETTE_HASH_COUNT];
+static unsigned long palette_hash_next;
+
+static unsigned long palette_hash_kept(const D3DCOLOR *palette, unsigned long watch_serial)
+{
+	unsigned long address = (unsigned long)palette, index;
+
+	if (!palette || !platform_is_contiguous(palette) || !platform_is_contiguous(palette + 255))
+		return palette_hash(palette);
+	for (index = 0; index < PALETTE_HASH_COUNT && palette_hashes[index].palette != palette; index++)
+		;
+	if (index < PALETTE_HASH_COUNT)
+	{
+		if (palette_hashes[index].watch_serial == watch_serial)
+			return palette_hashes[index].hash;
+		if (memory_watch_generation(address, 256 * sizeof(D3DCOLOR)) == palette_hashes[index].generation)
+		{
+			palette_hashes[index].watch_serial = watch_serial;
+			return palette_hashes[index].hash;
+		}
+	}
+	else
+	{
+		index = palette_hash_next++ % PALETTE_HASH_COUNT;
+	}
+	/* (protected first, so that a write racing with the hash is noticed) */
+	memory_watch_protect(address, 256 * sizeof(D3DCOLOR));
+	palette_hashes[index].palette = palette;
+	palette_hashes[index].generation = memory_watch_generation(address, 256 * sizeof(D3DCOLOR));
+	palette_hashes[index].watch_serial = memory_watch_serial();
+	palette_hashes[index].hash = palette_hash(palette);
+	return palette_hashes[index].hash;
+}
+
 /* an entry's GL texture and description: its replacement's, if it has one,
 with the bitmap's own size (which its coordinates are in) */
 static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
@@ -945,13 +991,13 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 	struct texture_entry *entry;
 	unsigned long generation;
 	BOOL palettized = ((format_word & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
-	unsigned long hash = palettized ? palette_hash(palette) : 0;
+	unsigned long watch_serial = memory_watch_serial();
+	unsigned long hash = palettized ? palette_hash_kept(palette, watch_serial) : 0;
 
 	struct texture_entry *oldest_variant = NULL;
 	unsigned long variant_count = 0;
 	static int no_cache = -1;
 	unsigned long recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
-	unsigned long watch_serial = memory_watch_serial();
 
 	/* (a texture that is not palettized has the one entry, until one is
 	dropped: remembered, a page written since only means checking it) */
