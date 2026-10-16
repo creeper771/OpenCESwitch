@@ -760,6 +760,27 @@ or last resized: platform_display_apply */
 static long platform_window_width = -1, platform_window_height = -1;
 #endif
 
+#ifdef HALO_ANDROID
+/* port/android/guest/runtime/guest_host.h */
+unsigned int host_cpu_clock(unsigned int megahertz);
+
+/* switch.cpu_clock, to the host when it has changed (a phone's host sets
+none) */
+static void platform_cpu_clock_apply(void)
+{
+	static long applied = -1;
+	long megahertz = config_integer("switch.cpu_clock");
+
+	if (megahertz < 0)
+		megahertz = 0;
+	if (megahertz != applied)
+	{
+		applied = megahertz;
+		host_cpu_clock((unsigned int)megahertz);
+	}
+}
+#endif
+
 BOOL platform_video_initialize(unsigned long width, unsigned long height)
 {
 	int version;
@@ -862,6 +883,9 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
+#ifdef HALO_ANDROID
+	platform_cpu_clock_apply();
+#endif
 #ifndef HALO_ANDROID
 	platform_mouse_capture(TRUE);
 #endif
@@ -894,6 +918,7 @@ void platform_display_apply(void)
 #else
 	if (!platform_window)
 		return;
+	platform_cpu_clock_apply();
 #endif
 	SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0);
 }

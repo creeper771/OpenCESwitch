@@ -64,5 +64,6 @@ host_touch_rumble
 host_touch_scene
 host_touch_bindings
 host_gamepad_gyro_read
+host_cpu_clock
 
 host_errno

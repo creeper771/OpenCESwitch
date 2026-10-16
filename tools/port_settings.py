@@ -28,7 +28,8 @@ VOLUMES = [(str(step), f"{step / 10:g}") for step in range(11)]
 # menu opens), its header (widget, bitmap), the row spacing, and its rows:
 # (label, setting, [(shown, value)], help, platform[, key]): platform is None
 # for every platform, else the platforms the row is for, separated by spaces
-# ("desktop", "android", "web": the menus' platform attribute,
+# ("desktop", "android", "switch", "web": the menus' platform attribute; a
+# Switch has every row of Android's too, _platforms,
 # port/linux/src/menu_files.c); key names the row's widgets where two rows set
 # one setting (one for each platform), else the setting's name does
 SCREENS = {
@@ -71,6 +72,9 @@ SCREENS = {
              "With V-Sync off, the most frames a second. Auto:\ntwice the display's refresh rate.", "desktop web"),
             ("SMOOTH MOTION:", "display.interpolation", ON_OFF,
              "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", None),
+            ("CPU CLOCK:", "switch.cpu_clock",
+             [("STOCK", "0"), ("1224 MHZ", "1224"), ("1428 MHZ", "1428"), ("1581 MHZ", "1581"), ("1785 MHZ", "1785")],
+             "The CPU's speed: faster keeps heavy scenes\nsmoother, for more heat and battery.", "switch"),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
              "In first person, turn the view the moment the\nmouse moves, not up to two ticks later.", "desktop web"),
             ("HIGH-RES HUD:", "display.high_res_hud", ON_OFF,
@@ -364,6 +368,20 @@ def _screen(folder: str, spec: dict, rows: list, list_inputs: list, list_handler
     return lines
 
 
+PLATFORMS = ["desktop", "android", "switch", "web"]
+
+
+def _platforms(platform):
+    """a row's platforms as the menus name them: a Switch (Android's build on
+    port/switch's host) has Android's rows, and rows of its own"""
+    if platform is None:
+        return None
+    names = set(platform.split())
+    if "android" in names:
+        names.add("switch")
+    return " ".join(name for name in PLATFORMS if name in names)
+
+
 def _placed(row: str, platform, members: list, places: dict) -> list:
     """a row's children (row, platform, place): one for its platforms where
     they have it in the same place, else one for each place, with the
@@ -383,8 +401,9 @@ def _setting_screen(folder: str, spec: dict) -> list:
     # (platform_places: each platform's rows in places of their own, with
     # no gap where the others' are; a row in one place for all its
     # platforms, else a child for each place)
-    places = {"desktop": -1, "android": -1, "web": -1}
+    places = {name: -1 for name in PLATFORMS}
     for index, (label, setting, choices, _, platform, *named) in enumerate(spec["rows"]):
+        platform = _platforms(platform)
         key = named[0] if named else setting.split(".", 1)[1]
         row = f"{base}/op_{key}"
         shares = setting in spec.get("same_place", ()) or key in spec.get("same_place", ())
@@ -425,7 +444,7 @@ def _setting_screen(folder: str, spec: dict) -> list:
         key = category_folder.rsplit("/", 1)[-1]
         row = f"{base}/op_{key}"
         target = f"{PE}/{category_folder}/{SCREENS[category_folder]['screen']}"
-        platform = category_platform[0] if category_platform else None
+        platform = _platforms(category_platform[0] if category_platform else None)
         if spec.get("platform_places"):
             members = platform.split() if platform else list(places)
             for name in members:

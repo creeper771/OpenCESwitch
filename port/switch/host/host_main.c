@@ -209,6 +209,9 @@ static void heartbeat(void *unused)
 				(unsigned long long)(now.long_frames - last.long_frames), (double)longest_frame / 1e6);
 		}
 		host_profile_report();
+		/* (the system sets its own clock again when the console is docked,
+		undocked or wakes) */
+		host_clock_keep();
 		last = now;
 	}
 }
@@ -320,6 +323,8 @@ int main(int argc, char **argv)
 		/* a map's high-res HUD decoded as it loads, on two more cores
 		(port/linux/src/hud_hires.c): there is room for it all */
 		"HALO_HUD_PREPARE=1",
+		/* the menus' rows for the Switch (port/linux/src/menu_files.c) */
+		"HALO_SWITCH=1",
 	};
 	AppletType type;
 	size_t image_size = 0;
@@ -384,6 +389,8 @@ int main(int argc, char **argv)
 	host_files_close();
 	/* (Mesa's shader cache entries still queued, port/switch/mesa/0006: not
 	in the system's switch-mesa) */
+	host_logf(HOST_LOG_INFO, "shutdown: the CPU's clock");
+	host_clock_restore();
 	host_logf(HOST_LOG_INFO, "shutdown: the shader cache");
 	if (disk_cache_switch_finish)
 		disk_cache_switch_finish();

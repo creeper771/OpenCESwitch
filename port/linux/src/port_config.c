@@ -479,6 +479,10 @@ static const struct config_setting config_settings[] =
 		"Send a report of each crash (a minidump and halo.log) to the developers'\n"
 		"Sentry project (port/windows/src/win32_crash.c): \"yes\" sends them, \"no\"\n"
 		"never does, \"ask\" asks at the next crash and writes the answer here." },
+	{ "switch.cpu_clock", _config_integer, "0", "HALO_CPU_CLOCK", _environment_value, _platform_android,
+		"On a Nintendo Switch, the CPU's clock in MHz while the game runs: 0 for\n"
+		"the system's own (1020), or 1224, 1428, 1581 or 1785 for steadier frames\n"
+		"in heavy scenes, with more heat and less battery. A phone ignores it." },
 
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"

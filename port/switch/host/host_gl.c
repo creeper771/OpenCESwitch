@@ -42,6 +42,12 @@ resolution, 1280x720 until it is read */
 static int display_width = 1280, display_height = 720;
 static Event display_changed;
 static int display_change_event;
+/* until when, after the console was docked or undocked, the CPU's clock is
+checked every few frames (host_clock.c: the system sets its own clock then,
+perhaps a little after the display changes) */
+static uint64_t clock_check_until;
+#define CLOCK_CHECK_NANOSECONDS 3000000000ULL
+#define CLOCK_CHECK_FRAMES 10
 
 /* SDL3's SDL_GLAttr values the guest sets */
 enum
@@ -141,13 +147,28 @@ static void display_read(void)
 }
 
 /* after a frame is presented: the display's new resolution, if the console
-was docked or undocked */
+was docked or undocked, and the CPU's clock set again at once and for a
+few seconds after (between heartbeats, it would have been the system's
+for up to five) */
 static void display_follow(void)
 {
+	static uint32_t frames;
+	uint64_t now;
+
 	if (display_change_event && R_SUCCEEDED(eventWait(&display_changed, 0)))
 	{
 		eventClear(&display_changed);
 		display_read();
+		clock_check_until = host_now() + CLOCK_CHECK_NANOSECONDS;
+		host_clock_keep();
+	}
+	if (clock_check_until && ++frames % CLOCK_CHECK_FRAMES == 0)
+	{
+		now = host_now();
+		if (now < clock_check_until)
+			host_clock_keep();
+		else
+			clock_check_until = 0;
 	}
 }
 

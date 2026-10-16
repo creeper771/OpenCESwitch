@@ -206,6 +206,11 @@ void host_audio_stop(void);
 void host_files_close(void);
 void host_profile_stop(void);
 
+/* host_clock.c: the CPU's clock (switch.cpu_clock) */
+unsigned int host_cpu_clock(unsigned int megahertz);
+void host_clock_keep(void);
+void host_clock_restore(void);
+
 /* host_profile.c */
 void host_profile_start(void);
 void host_profile_report(void);

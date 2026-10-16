@@ -32,7 +32,7 @@ LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) $(MESA_LIBS) -L$(PORTLIBS)/li
 # cache)
 LIBS    := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lz -lnx
 
-SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c host_gl.c host_profile.c host_network.c host_input.c \
+SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c host_gl.c host_profile.c host_network.c host_input.c host_clock.c \
 	host_watch_hash.c posix_files.c
 ASSEMBLY := host_stack.s host_stubs.s
 OBJECTS := $(addprefix $(OUT)/obj/,$(SOURCES:.c=.o) $(ASSEMBLY:.s=.o))

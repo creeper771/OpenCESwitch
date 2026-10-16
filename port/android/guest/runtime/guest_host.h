@@ -146,4 +146,11 @@ over 0.0022); the gamepad is the game's index of it. Nothing where the host
 reads no controller's gyroscope (Android, for now). */
 void host_gamepad_gyro_read(int gamepad, float *turn);
 
+/* ---------- the device */
+
+/* the CPU's clock in MHz (switch.cpu_clock), 0 for the system's own; the
+clock set (MHz), or 0 where the host cannot set it (Android: a phone's
+clock is the system's) */
+unsigned int host_cpu_clock(unsigned int megahertz);
+
 #endif

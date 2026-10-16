@@ -236,3 +236,11 @@ void host_gamepad_gyro_read(int gamepad, float *turn)
 	turn[0] = 0.0f;
 	turn[1] = 0.0f;
 }
+
+/* the guest's: the CPU's clock (guest_host.h), which a phone's system keeps:
+none set */
+unsigned int host_cpu_clock(unsigned int megahertz)
+{
+	(void)megahertz;
+	return 0;
+}
