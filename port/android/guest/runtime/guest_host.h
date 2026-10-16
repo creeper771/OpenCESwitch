@@ -148,9 +148,10 @@ void host_gamepad_gyro_read(int gamepad, float *turn);
 
 /* ---------- the device */
 
-/* the CPU's clock in MHz (switch.cpu_clock), 0 for the system's own; the
-clock set (MHz), or 0 where the host cannot set it (Android: a phone's
-clock is the system's) */
-unsigned int host_cpu_clock(unsigned int megahertz);
+/* the CPU's clocks in MHz docked and in the hand (switch.cpu_clock_docked,
+switch.cpu_clock_handheld), 0 for the system's own; the clock set now
+(MHz), or 0 where the host cannot set it (Android: a phone's clock is the
+system's) */
+unsigned int host_cpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
 
 #endif

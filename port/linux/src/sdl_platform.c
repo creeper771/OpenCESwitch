@@ -762,21 +762,25 @@ static long platform_window_width = -1, platform_window_height = -1;
 
 #ifdef HALO_ANDROID
 /* port/android/guest/runtime/guest_host.h */
-unsigned int host_cpu_clock(unsigned int megahertz);
+unsigned int host_cpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
 
-/* switch.cpu_clock, to the host when it has changed (a phone's host sets
-none) */
+/* switch.cpu_clock_docked and switch.cpu_clock_handheld, to the host when
+either has changed (a phone's host sets none) */
 static void platform_cpu_clock_apply(void)
 {
-	static long applied = -1;
-	long megahertz = config_integer("switch.cpu_clock");
+	static long applied_docked = -1, applied_handheld = -1;
+	long docked = config_integer("switch.cpu_clock_docked");
+	long handheld = config_integer("switch.cpu_clock_handheld");
 
-	if (megahertz < 0)
-		megahertz = 0;
-	if (megahertz != applied)
+	if (docked < 0)
+		docked = 0;
+	if (handheld < 0)
+		handheld = 0;
+	if (docked != applied_docked || handheld != applied_handheld)
 	{
-		applied = megahertz;
-		host_cpu_clock((unsigned int)megahertz);
+		applied_docked = docked;
+		applied_handheld = handheld;
+		host_cpu_clock((unsigned int)docked, (unsigned int)handheld);
 	}
 }
 #endif

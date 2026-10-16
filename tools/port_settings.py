@@ -22,6 +22,8 @@ ON_OFF = [("ON", "true"), ("OFF", "false")]
 SHIELD_COLORS = ["white", "black", "red", "blue", "gray", "yellow", "green", "pink", "purple", "cyan", "cobalt",
                  "orange", "teal", "sage", "brown", "tan", "maroon", "salmon"]
 SENSITIVITIES = [(f"{value:g}", f"{value:g}") for value in (0.1, 0.15, 0.25, 0.4, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4)]
+# the Switch's CPU clocks (port/switch/host/host_clock.c)
+CPU_CLOCKS = [("STOCK", "0"), ("1224 MHZ", "1224"), ("1428 MHZ", "1428"), ("1581 MHZ", "1581"), ("1785 MHZ", "1785")]
 VOLUMES = [(str(step), f"{step / 10:g}") for step in range(11)]
 
 # each screen: its folder below PE, its screen's widget (the name the profile
@@ -72,9 +74,10 @@ SCREENS = {
              "With V-Sync off, the most frames a second. Auto:\ntwice the display's refresh rate.", "desktop web"),
             ("SMOOTH MOTION:", "display.interpolation", ON_OFF,
              "Draw a frame for every display refresh, blending\nbetween the game's 30 ticks a second.", None),
-            ("CPU CLOCK:", "switch.cpu_clock",
-             [("STOCK", "0"), ("1224 MHZ", "1224"), ("1428 MHZ", "1428"), ("1581 MHZ", "1581"), ("1785 MHZ", "1785")],
-             "The CPU's speed: faster keeps heavy scenes\nsmoother, for more heat and battery.", "switch"),
+            ("DOCKED CPU CLOCK:", "switch.cpu_clock_docked", CPU_CLOCKS,
+             "The CPU's speed docked: faster keeps heavy\nscenes smoother, with more heat.", "switch"),
+            ("HANDHELD CPU CLOCK:", "switch.cpu_clock_handheld", CPU_CLOCKS,
+             "The CPU's speed in the hand: faster keeps heavy\nscenes smoother, for less battery.", "switch"),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
              "In first person, turn the view the moment the\nmouse moves, not up to two ticks later.", "desktop web"),
             ("HIGH-RES HUD:", "display.high_res_hud", ON_OFF,

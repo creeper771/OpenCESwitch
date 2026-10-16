@@ -227,7 +227,8 @@ These settings are only for Android:
 | `input.touch_controls` | The touch controls in a game. `"auto"` (the default): shown on a touchscreen while no controller is connected. `"on"`: also shown with a controller. `"off"`: never shown. A device without a touchscreen never shows them. The menus take taps in any case. |
 | `display.screen_width` | The number of columns of the 480-line picture. `0` (the default): the shape of the display (1068 on a 20:9 phone). `640`: the 4:3 shape of the Xbox. |
 | `display.render_height` | The lines the picture is drawn at, from `480` to `2160` and at most the display's (Video Settings > Resolution). `0` (the default): 480 on a phone; on a Switch (`port/switch`), two thirds of the display's lines, 480 in the hand and 720 docked. More lines are sharper and ask more of the GPU. |
-| `switch.cpu_clock` | On a Switch (`port/switch`; Video Settings > CPU Clock there), the CPU's clock in MHz while the game runs: `0` (the default) for the system's own, 1020 MHz, or `1224`, `1428`, `1581` or `1785`, which keep heavy scenes smoother with more heat and less battery. A phone ignores it. |
+| `switch.cpu_clock_docked` | On a Switch (`port/switch`; Video Settings > Docked CPU Clock there), the CPU's clock in MHz while the game runs docked: `0` (the default) for the system's own, 1020 MHz, or `1224`, `1428`, `1581` or `1785`, which keep heavy scenes smoother with more heat. A phone ignores it. |
+| `switch.cpu_clock_handheld` | The same in the hand (Video Settings > Handheld CPU Clock), where a faster clock also takes more of the battery. The clock follows the console as it is docked and undocked. |
 | `debug.sample_seconds` | Refer to "Find problems". |
 | `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Refer to "Limits". |
 
