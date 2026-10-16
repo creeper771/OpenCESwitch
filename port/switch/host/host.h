@@ -198,8 +198,13 @@ clipboard */
 extern const struct host_import host_input_imports[];
 int host_input_poll_event(void *event);
 
-/* host_network.c: as without a network, until the host has sockets */
+/* host_network.c: the sockets, UPnP and DTLS (port/linux/src/posix_net.c,
+posix_upnp.c, posix_dtls.c) on libnx's sockets */
 extern const struct host_import host_network_imports[];
+/* starts the sockets, and gives the game's broadcast setting for the
+network the console is on ("" for none) */
+void host_network_start(char *broadcast, size_t broadcast_size);
+void host_network_stop(void);
 
 /* the shutdown, once the game has exited (host_main.c) */
 void host_audio_stop(void);

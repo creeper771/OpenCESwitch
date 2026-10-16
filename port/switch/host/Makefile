@@ -32,15 +32,32 @@ LDFLAGS := -specs=$(LIBNX)/switch.specs -g $(ARCH) $(MESA_LIBS) -L$(PORTLIBS)/li
 # cache)
 LIBS    := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lz -lnx
 
+# internet play's UPnP and DTLS, as the Android host has them
+# (tools/android_build.py): port/third_party's miniupnpc and mbedtls
+MINIUPNPC := $(ROOT)/port/third_party/miniupnpc
+MBEDTLS := $(ROOT)/port/third_party/mbedtls
+MINIUPNPC_SOURCES := $(notdir $(wildcard $(MINIUPNPC)/src/*.c))
+MBEDTLS_SOURCES := $(notdir $(wildcard $(MBEDTLS)/library/*.c))
+
 SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c host_gl.c host_profile.c host_network.c host_input.c host_clock.c \
-	host_watch_hash.c posix_files.c
+	host_watch_hash.c posix_files.c posix_net.c posix_upnp.c posix_dtls.c \
+	$(MINIUPNPC_SOURCES) $(MBEDTLS_SOURCES)
 ASSEMBLY := host_stack.s host_stubs.s
 OBJECTS := $(addprefix $(OUT)/obj/,$(SOURCES:.c=.o) $(ASSEMBLY:.s=.o))
 
-vpath %.c . $(ROOT)/port/android/host $(ROOT)/port/linux/src
+vpath %.c . $(ROOT)/port/android/host $(ROOT)/port/linux/src $(MINIUPNPC)/src $(MBEDTLS)/library
 
-# posix_files.c's file functions are the guest's hostposix_* imports
+# posix_*.c's functions are the guest's hostposix_* imports
 $(OUT)/obj/posix_files.o: CFLAGS += -include host_posix.h -I$(ROOT)/port/linux/src
+$(OUT)/obj/posix_net.o: CFLAGS += -I$(ROOT)/port/linux/src
+# (compat/: what libnx's headers do not have that they need)
+MINIUPNPC_FLAGS := -I$(MINIUPNPC)/include -I$(MINIUPNPC)/src -DMINIUPNP_STATICLIB -DMINIUPNPC_SET_SOCKET_TIMEOUT \
+	-DMINIUPNPC_GET_SRC_ADDR -D_BSD_SOURCE -D_DEFAULT_SOURCE -Icompat -include compat/miniupnpc_switch.h
+MBEDTLS_FLAGS := -I$(MBEDTLS)/include -I$(MBEDTLS)/library -DMBEDTLS_USER_CONFIG_FILE='"compat/mbedtls_switch_config.h"' 
+$(OUT)/obj/posix_upnp.o: CFLAGS += -I$(ROOT)/port/linux/src $(MINIUPNPC_FLAGS)
+$(addprefix $(OUT)/obj/,$(MINIUPNPC_SOURCES:.c=.o)): CFLAGS += $(MINIUPNPC_FLAGS) -w
+$(OUT)/obj/posix_dtls.o: CFLAGS += -I$(ROOT)/port/linux/src $(MBEDTLS_FLAGS)
+$(addprefix $(OUT)/obj/,$(MBEDTLS_SOURCES:.c=.o)): CFLAGS += $(MBEDTLS_FLAGS) -w
 
 .PHONY: all clean
 
@@ -64,10 +81,15 @@ $(GUEST):
 $(OUT)/romfs/halo_guest.elf: $(GUEST) | $(OUT)/romfs
 	cp $< $@
 
+# internet play's MQTT brokers (network.brokers_file), which the host writes
+# into the data folder at each start, as the Android app does
+$(OUT)/romfs/brokers.txt: $(ROOT)/port/assets/network/brokers.txt | $(OUT)/romfs
+	cp $< $@
+
 $(OUT)/opence.nacp:
 	$(TOOLS)/nacptool --create "OpenCE" "OpenCE" "0.1.0" $@
 
-$(OUT)/opence.nro: $(OUT)/opence.elf $(OUT)/opence.nacp $(OUT)/romfs/halo_guest.elf
+$(OUT)/opence.nro: $(OUT)/opence.elf $(OUT)/opence.nacp $(OUT)/romfs/halo_guest.elf $(OUT)/romfs/brokers.txt
 	$(TOOLS)/elf2nro $< $@ --nacp=$(OUT)/opence.nacp --icon=$(LIBNX)/default_icon.jpg --romfsdir=$(OUT)/romfs
 
 clean:

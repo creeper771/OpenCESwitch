@@ -3,32 +3,67 @@ POSIX_NET.C
 
 BSD socket helpers behind the Winsock layer in xnet.c (see posix.h). Built
 with the host ABI.
+
+The Switch's host (port/switch/host) builds it on libnx's sockets, the
+system's own BSD ones: their sockaddr has a length byte and a family byte
+where Winsock's and Linux's have a family of two bytes, so an address is
+turned to and from theirs as it passes (address_to_host,
+address_from_host); there is no interface list (the system's own address
+is the local one), and, as on Android, no desktop: no command line, user
+key file, URL scheme or Discord. Its random numbers and process functions
+are the host's (host_network.c).
 */
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifndef __SWITCH__
 #include <ifaddrs.h>
+#endif
 #include <limits.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#ifndef __SWITCH__
 #include <spawn.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#ifndef __SWITCH__
 #include <sys/random.h>
+#endif
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifndef __SWITCH__
 #include <sys/un.h>
 #include <sys/wait.h>
+#endif
 #include <unistd.h>
 
 #include "posix.h"
+
+/* (a phone's or a Switch's: the desktop's programs, files and Discord are
+not there) */
+#if defined(__ANDROID__) || defined(__SWITCH__)
+#define POSIX_NET_NO_DESKTOP 1
+#endif
+
+#ifdef __SWITCH__
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC 0
+#endif
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+#define accept4(socket, address, length, flags) accept(socket, address, length)
+/* (libnx's, which newlib does not declare: the system's own address) */
+long gethostid(void);
+#endif
 
 /* Winsock error codes (winsockx.h) */
 #define WSAEINTR 10004
@@ -106,7 +141,9 @@ static int fail(void)
 	/* a send on a connection the other end reset (with MSG_NOSIGNAL):
 	Winsock's WSAECONNRESET, which the game takes as the connection lost */
 	case ECONNRESET: case EPIPE: last_error = WSAECONNRESET; break;
+#ifdef ESHUTDOWN
 	case ESHUTDOWN: last_error = WSAESHUTDOWN; break;
+#endif
 	case EHOSTDOWN: last_error = WSAEHOSTDOWN; break;
 	case ENOBUFS: case ENOMEM: last_error = WSAENOBUFS; break;
 	case EISCONN: last_error = WSAEISCONN; break;
@@ -127,6 +164,36 @@ static int succeed(int result)
 	return result;
 }
 
+#ifdef __SWITCH__
+/* a guest's address (Winsock's sockaddr: a family of two bytes, then the
+port and address) as libnx's (a length byte, a family byte, then the
+same), in host; the address itself if it is too short or too long */
+static const struct sockaddr *address_to_host(const void *address, int length, struct sockaddr_storage *host)
+{
+	if (!address || length < 2 || length > (int)sizeof(*host))
+		return address;
+	memcpy(host, address, (size_t)length);
+	((unsigned char *)host)[0] = (unsigned char)length;
+	((unsigned char *)host)[1] = ((const unsigned char *)address)[0];
+	return (const struct sockaddr *)host;
+}
+
+/* an address libnx gave, of this length, made the guest's in place */
+static void address_from_host(void *address, int length)
+{
+	unsigned char *bytes = address;
+
+	if (address && length >= 2)
+	{
+		bytes[0] = bytes[1];
+		bytes[1] = 0;
+	}
+}
+#else
+#define address_to_host(address, length, host) ((const struct sockaddr *)(address))
+#define address_from_host(address, length) ((void)0)
+#endif
+
 int posix_socket_last_error(void)
 {
 	return last_error;
@@ -144,7 +211,9 @@ int posix_socket_close(int socket)
 
 int posix_socket_bind(int socket, const void *address, int address_length)
 {
-	return succeed(bind(socket, address, (socklen_t)address_length));
+	struct sockaddr_storage host;
+
+	return succeed(bind(socket, address_to_host(address, address_length, &host), (socklen_t)address_length));
 }
 
 int posix_socket_connect(int socket, const void *address, int address_length)
@@ -155,7 +224,8 @@ int posix_socket_connect(int socket, const void *address, int address_length)
 	transport_endpoint_winsock.c); as WSAEINPROGRESS it gave up at once,
 	and every system link join failed, a split screen game's join of its
 	own host included. */
-	int result = connect(socket, address, (socklen_t)address_length);
+	struct sockaddr_storage host;
+	int result = connect(socket, address_to_host(address, address_length, &host), (socklen_t)address_length);
 
 	if (result < 0 && errno == EINPROGRESS)
 	{
@@ -177,6 +247,8 @@ int posix_socket_accept(int socket, void *address, int *address_length)
 
 	if (address_length)
 		*address_length = (int)length;
+	if (result >= 0 && address_length)
+		address_from_host(address, *address_length);
 	return succeed(result);
 }
 
@@ -188,8 +260,10 @@ int posix_socket_send(int socket, const void *buffer, int length, int flags)
 int posix_socket_sendto(int socket, const void *buffer, int length, int flags,
 	const void *address, int address_length)
 {
+	struct sockaddr_storage host;
+
 	return succeed((int)sendto(socket, buffer, (size_t)length, flags | MSG_NOSIGNAL,
-		address, (socklen_t)address_length));
+		address_to_host(address, address_length, &host), (socklen_t)address_length));
 }
 
 int posix_socket_recv(int socket, void *buffer, int length, int flags)
@@ -214,6 +288,8 @@ int posix_socket_recvfrom(int socket, void *buffer, int length, int flags,
 	result = (int)recvmsg(socket, &message, flags);
 	if (address_length)
 		*address_length = (int)message.msg_namelen;
+	if (result >= 0 && address && address_length)
+		address_from_host(address, *address_length);
 	/* a datagram larger than the buffer: both give its start, but Winsock
 	with WSAEMSGSIZE, which the game takes as an error, not as the datagram */
 	if (result >= 0 && (message.msg_flags & MSG_TRUNC))
@@ -315,6 +391,8 @@ int posix_socket_getsockname(int socket, void *address, int *address_length)
 	int result = getsockname(socket, address, &length);
 
 	*address_length = (int)length;
+	if (result >= 0)
+		address_from_host(address, *address_length);
 	return succeed(result);
 }
 
@@ -324,6 +402,8 @@ int posix_socket_getpeername(int socket, void *address, int *address_length)
 	int result = getpeername(socket, address, &length);
 
 	*address_length = (int)length;
+	if (result >= 0)
+		address_from_host(address, *address_length);
 	return succeed(result);
 }
 
@@ -438,6 +518,11 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 loopback and has these flags; or 0 */
 static posix_ulong interface_address(unsigned int flags)
 {
+#ifdef __SWITCH__
+	/* (the system's own address: libnx's gethostid, the network's) */
+	(void)flags;
+	return (posix_ulong)(unsigned long)gethostid();
+#else
 	struct ifaddrs *addresses, *entry;
 	posix_ulong result = 0;
 
@@ -460,6 +545,7 @@ static posix_ulong interface_address(unsigned int flags)
 	}
 	freeifaddrs(addresses);
 	return result;
+#endif
 }
 
 posix_ulong posix_local_ipv4_address(void)
@@ -484,6 +570,9 @@ posix_ulong posix_local_ipv4_address(void)
 	if (probe >= 0)
 	{
 		memset(&route, 0, sizeof(route));
+#ifdef __SWITCH__
+		route.sin_len = sizeof(route);
+#endif
 		route.sin_family = AF_INET;
 		route.sin_port = htons(9);
 		route.sin_addr.s_addr = htonl(0xC6336401);
@@ -500,6 +589,7 @@ posix_ulong posix_local_ipv4_address(void)
 	return result ? result : interface_address(0);
 }
 
+#ifndef __SWITCH__
 void posix_random_bytes(void *buffer, posix_ulong size)
 {
 	unsigned char *cursor = buffer;
@@ -541,6 +631,7 @@ void posix_random_bytes(void *buffer, posix_ulong size)
 		abort();
 	}
 }
+#endif
 
 posix_ulong posix_resolve_ipv4(const char *host)
 {
@@ -560,6 +651,7 @@ posix_ulong posix_resolve_ipv4(const char *host)
 
 /* ---------- the process and the desktop */
 
+#ifndef __SWITCH__
 int posix_command_line_argument(int index, char *buffer, posix_ulong size)
 {
 #ifdef __ANDROID__
@@ -596,10 +688,11 @@ posix_ulong posix_process_id(void)
 {
 	return (posix_ulong)getpid();
 }
+#endif
 
 int posix_user_secret(unsigned char *secret, int size)
 {
-#ifdef __ANDROID__
+#ifdef POSIX_NET_NO_DESKTOP
 	(void)secret;
 	(void)size;
 	return 0;
@@ -658,7 +751,7 @@ int posix_user_secret(unsigned char *secret, int size)
 #endif
 }
 
-#ifndef __ANDROID__
+#ifndef POSIX_NET_NO_DESKTOP
 /* runs a program with its arguments and waits for it; its exit status, or -1 */
 static int run_program(char *const arguments[])
 {
@@ -676,7 +769,7 @@ static int run_program(char *const arguments[])
 
 int posix_register_url_scheme(const char *scheme, const char *description)
 {
-#ifdef __ANDROID__
+#ifdef POSIX_NET_NO_DESKTOP
 	(void)scheme;
 	(void)description;
 	return 0;
@@ -740,7 +833,7 @@ int posix_register_url_scheme(const char *scheme, const char *description)
 
 int posix_discord_connect(void)
 {
-#ifdef __ANDROID__
+#ifdef POSIX_NET_NO_DESKTOP
 	return -1;
 #else
 	/* where Discord (and its Flatpak and Snap packages) put discord-ipc-N */

@@ -364,11 +364,41 @@ int main(int argc, char **argv)
 	if (host_load_image(image, image_size) != 0)
 		host_fatal("cannot load the game image");
 	free(image);
+	/* internet play's MQTT brokers (network.brokers_file): the NRO's list,
+	written into the data folder at each start, as the Android app writes
+	its APK's */
+	{
+		FILE *source = fopen("romfs:/brokers.txt", "rb");
+		FILE *target = source ? fopen("sdmc:" HOST_DATA_ROOT "/brokers.txt", "wb") : NULL;
+		char buffer[4096];
+		size_t count;
+
+		while (target && (count = fread(buffer, 1, sizeof(buffer), source)) > 0)
+			fwrite(buffer, 1, count, target);
+		if (target)
+			fclose(target);
+		if (source)
+			fclose(source);
+		if (!target)
+			host_logf(HOST_LOG_WARN, "network: the brokers' list cannot be written: no internet play invites");
+	}
 	romfsExit();
 
 	host_logf(HOST_LOG_INFO, "data %s, saves %s", HOST_DATA_ROOT, HOST_SAVE_ROOT);
 	start_heartbeat();
-	code = host_run_guest_main(make_boot(environment, (int)(sizeof(environment) / sizeof(environment[0]))));
+	/* (before the game: its network starts with it, and its broadcasts are
+	for the network the console is on) */
+	{
+		const char *all[sizeof(environment) / sizeof(environment[0]) + 1];
+		int count = (int)(sizeof(environment) / sizeof(environment[0]));
+		char broadcast[96];
+
+		memcpy(all, environment, sizeof(environment));
+		host_network_start(broadcast, sizeof(broadcast));
+		if (broadcast[0])
+			all[count++] = broadcast;
+		code = host_run_guest_main(make_boot(all, count));
+	}
 
 	/* the game has exited: everything it used is let go, in an order that
 	frees nothing still in use, and the homebrew loader takes over */
@@ -387,6 +417,8 @@ int main(int argc, char **argv)
 	host_audio_stop();
 	host_logf(HOST_LOG_INFO, "shutdown: the game's files");
 	host_files_close();
+	host_logf(HOST_LOG_INFO, "shutdown: the network");
+	host_network_stop();
 	/* (Mesa's shader cache entries still queued, port/switch/mesa/0006: not
 	in the system's switch-mesa) */
 	host_logf(HOST_LOG_INFO, "shutdown: the CPU's clock");
