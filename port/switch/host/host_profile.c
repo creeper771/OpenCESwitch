@@ -9,7 +9,10 @@ game's code: llvm-symbolizer --obj=build/android/halo_guest.elf. Host
 addresses are given as offsets in the NRO (the host, Mesa, libnx):
 aarch64-none-elf-addr2line -f -e build/switch/opence.elf.
 
-Also counts the guest's system calls by number (host_syscall.c).
+Also counts the guest's system calls by number (host_syscall.c), and keeps
+the samples of each frame that took HITCH_NANOSECONDS or more apart, in
+HITCHES_PATH (host_profile_frame), in profile.txt's format: what the game
+did in the frames that stuttered.
 */
 
 #include "host.h"
@@ -42,11 +45,36 @@ twelfth heartbeat (a minute), for a profile by function (port/switch/README.md) 
 /* where the thread was, then its callers: the link register, and the
 return addresses of CHAIN_DEPTH - 2 more frame records (the paused
 thread's stack is read: one query of its mapping, then reads within it) */
-#define CHAIN_DEPTH 8
+#define CHAIN_DEPTH 12
+
+struct chain_table
+{
+	uint64_t (*chains)[CHAIN_DEPTH];
+	uint32_t *counts;
+	uint32_t size;
+	uint32_t total;
+};
 
 static uint64_t all_chains[ALL_SIZE][CHAIN_DEPTH];
 static uint32_t all_counts[ALL_SIZE];
-static uint32_t all_total;
+static struct chain_table all = { all_chains, all_counts, ALL_SIZE, 0 };
+
+/* the samples of the last RECENT_SIZE (about four seconds), with when each
+was taken, and those of the frames that took HITCH_NANOSECONDS or more */
+#define HITCHES_PATH "sdmc:/switch/opence/hitches.txt"
+#define HITCH_NANOSECONDS 100000000ULL
+#define RECENT_SIZE 4096
+#define HITCHES_SIZE 16384
+
+static uint64_t recent_chains[RECENT_SIZE][CHAIN_DEPTH];
+static uint64_t recent_times[RECENT_SIZE];
+static uint32_t recent_next;
+static uint64_t hitch_chains[HITCHES_SIZE][CHAIN_DEPTH];
+static uint32_t hitch_counts[HITCHES_SIZE];
+static struct chain_table hitches = { hitch_chains, hitch_counts, HITCHES_SIZE, 0 };
+static uint32_t hitch_frames;
+static uint64_t hitch_time;
+
 static Mutex profile_lock;
 static Handle profiled = INVALID_HANDLE;
 static Thread sampler_thread;
@@ -111,7 +139,7 @@ static void chain_of(const ThreadContext *context, uint64_t *chain)
 	}
 }
 
-static void all_add(const uint64_t *chain)
+static void chains_add(struct chain_table *table, const uint64_t *chain)
 {
 	uint32_t hash = 0, probe;
 	int depth;
@@ -120,13 +148,13 @@ static void all_add(const uint64_t *chain)
 		hash = (hash ^ (uint32_t)(chain[depth] >> 2)) * 2654435761u;
 	for (probe = 0; probe < ALL_PROBES; probe++)
 	{
-		uint32_t index = (hash + probe) % ALL_SIZE;
+		uint32_t index = (hash + probe) % table->size;
 
-		if (!all_counts[index] || !memcmp(all_chains[index], chain, sizeof(all_chains[index])))
+		if (!table->counts[index] || !memcmp(table->chains[index], chain, sizeof(table->chains[index])))
 		{
-			memcpy(all_chains[index], chain, sizeof(all_chains[index]));
-			all_counts[index]++;
-			all_total++;
+			memcpy(table->chains[index], chain, sizeof(table->chains[index]));
+			table->counts[index]++;
+			table->total++;
 			return;
 		}
 	}
@@ -134,34 +162,55 @@ static void all_add(const uint64_t *chain)
 
 /* (written whole to a new file, which then replaces the last: a file cut
 off by the game's exit lost most of its samples) */
-static void all_write(void)
+static void chains_write(const struct chain_table *table, const char *path, const char *heading)
 {
-	FILE *file = fopen(PROFILE_PATH ".new", "w");
+	char new_path[64];
+	FILE *file;
 	char text[48];
 	uint32_t index;
 	int depth;
 
+	snprintf(new_path, sizeof(new_path), "%s.new", path);
+	file = fopen(new_path, "w");
 	if (!file)
 		return;
-	fprintf(file, "# samples of the main thread since the start: count, where, then its callers\n# %u samples\n",
-		all_total);
-	for (index = 0; index < ALL_SIZE; index++)
+	fprintf(file, "# %s: count, where, then its callers\n# %u samples\n", heading, table->total);
+	for (index = 0; index < table->size; index++)
 	{
-		if (!all_counts[index])
+		if (!table->counts[index])
 			continue;
-		fprintf(file, "%u", all_counts[index]);
+		fprintf(file, "%u", table->counts[index]);
 		for (depth = 0; depth < CHAIN_DEPTH; depth++)
 		{
-			describe(text, sizeof(text), all_chains[index][depth]);
+			describe(text, sizeof(text), table->chains[index][depth]);
 			fprintf(file, "\t%s", text);
 		}
 		fprintf(file, "\n");
 	}
 	if (fclose(file) == 0)
 	{
-		remove(PROFILE_PATH);
-		rename(PROFILE_PATH ".new", PROFILE_PATH);
+		remove(path);
+		rename(new_path, path);
 	}
+}
+
+/* a frame from start to end (host_now), which the game has presented: its
+samples, if it took HITCH_NANOSECONDS or more, into the hitches' table */
+void host_profile_frame(uint64_t start, uint64_t end)
+{
+	uint32_t index;
+
+	if (end - start < HITCH_NANOSECONDS || sampler_thread.handle == INVALID_HANDLE || !sampler_thread.handle)
+		return;
+	mutexLock(&profile_lock);
+	for (index = 0; index < RECENT_SIZE; index++)
+	{
+		if (recent_times[index] >= start && recent_times[index] <= end)
+			chains_add(&hitches, recent_chains[index]);
+	}
+	hitch_frames++;
+	hitch_time += end - start;
+	mutexUnlock(&profile_lock);
 }
 
 /* pauses the sampler for good (the shutdown) */
@@ -197,7 +246,10 @@ static void sampler(void *unused)
 		mutexLock(&profile_lock);
 		table_add(&program_counters, chain[0]);
 		table_add(&link_registers, chain[1]);
-		all_add(chain);
+		chains_add(&all, chain);
+		memcpy(recent_chains[recent_next], chain, sizeof(recent_chains[recent_next]));
+		recent_times[recent_next] = host_now();
+		recent_next = (recent_next + 1) % RECENT_SIZE;
 		mutexUnlock(&profile_lock);
 	}
 }
@@ -285,7 +337,15 @@ void host_profile_report(void)
 	/* (every twelfth, a minute: the file is large, and its writes share the
 	SD card with the game's reads) */
 	if (++reports % 12 == 0)
-		all_write();
+	{
+		char heading[96];
+
+		chains_write(&all, PROFILE_PATH, "samples of the main thread since the start");
+		snprintf(heading, sizeof(heading), "samples of the main thread in its %u frames of 100 ms or more (%llu ms)",
+			hitch_frames, (unsigned long long)(hitch_time / 1000000));
+		if (hitch_frames)
+			chains_write(&hitches, HITCHES_PATH, heading);
+	}
 	mutexUnlock(&profile_lock);
 
 	for (number = 0; number < SYSCALL_NUMBERS; number++)

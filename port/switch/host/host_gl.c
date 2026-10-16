@@ -91,18 +91,23 @@ static int glthread;
 /* under the GL thread, glBufferSubData is queued without waiting for the
 thread only below this size (Mesa's MARSHAL_MAX_CMD_SIZE, less its command) */
 #define QUEUED_WRITE_BYTES 8000u
-/* the game's swap interval (display.vsync), and when the next frame may be
-shown under the host's limit */
+/* the game's swap interval (display.vsync), the window's, and when the next
+frame may be shown under the host's limit */
 static int wanted_interval = 1;
+static int window_interval = -1;
 static uint64_t next_frame;
+/* when the last frame was presented (host_sdl_gl_swap_window's pacing
+counters) */
+static uint64_t last_shown;
 
-/* Mesa's Switch surface has two buffers, and with a swap interval of 1 a
-frame that misses a refresh waits for the next to get one back
-(nwindowDequeueBuffer): a frame of 17 ms took 33, the game dropped from 60
-frames a second to 30 and back, and the campaign's profile spent 15% of
-its main thread there. The window's interval is therefore 0, and the host
-keeps the game to 60 frames a second itself: a quicker frame waits for its
-turn, a slower one is shown when it is done. */
+/* With display.vsync (V-SYNC in Video Settings), the window's swap interval
+is 1: each frame is shown on a display refresh, so that they are evenly
+paced, and Mesa's Switch surface has three buffers, so that the game can
+begin the next frame while one waits for its refresh. Without it, the
+interval is 0 and the host keeps the game to 60 frames a second itself: a
+quicker frame waits for its turn, a slower one is shown when it is done,
+whenever in the display's refresh that is. (Early in the port, before
+Mesa's GL thread, the interval of 1 made frames of 17 ms take 33.) */
 #define FRAME_NANOSECONDS 16666667ULL
 
 void *host_gl_resolve(const char *name)
@@ -306,16 +311,34 @@ int host_sdl_gl_make_current(uint32_t window, uint32_t handle)
 int host_sdl_gl_set_swap_interval(int interval)
 {
 	wanted_interval = interval;
-	return display != EGL_NO_DISPLAY && eglSwapInterval(display, 0);
+	return display != EGL_NO_DISPLAY;
 }
 
 int host_sdl_gl_swap_window(uint32_t window)
 {
 	uint64_t start = host_now();
+	int vsync = wanted_interval > 0;
 	int result;
 
 	(void)window;
-	if (wanted_interval > 0)
+	if (display != EGL_NO_DISPLAY && window_interval != vsync)
+	{
+		window_interval = vsync;
+		eglSwapInterval(display, vsync);
+		host_logf(HOST_LOG_INFO, "frames: %s", vsync ? "shown on the display's refreshes (V-Sync)" :
+			"at most 60 a second, shown when done");
+	}
+	if (last_shown)
+	{
+		uint64_t work = start - last_shown;
+
+		HOST_ADD(work_time, work);
+		if (work > FRAME_NANOSECONDS)
+			HOST_ADD(over_budget, 1);
+		if (work > host_activity.longest_work)
+			host_activity.longest_work = work;
+	}
+	if (!vsync)
 	{
 		if (start < next_frame)
 		{
@@ -330,7 +353,24 @@ int host_sdl_gl_swap_window(uint32_t window)
 	}
 	result = display != EGL_NO_DISPLAY && eglSwapBuffers(display, surface);
 	display_follow();
-	HOST_ADD(swap_time, host_now() - start);
+	{
+		uint64_t now = host_now();
+
+		if (last_shown)
+		{
+			uint64_t frame = now - last_shown;
+
+			host_profile_frame(last_shown, now);
+			if (frame >= 20000000ULL)
+				HOST_ADD(late_frames, 1);
+			if (frame >= 34000000ULL)
+				HOST_ADD(long_frames, 1);
+			if (frame > host_activity.longest_frame)
+				host_activity.longest_frame = frame;
+		}
+		last_shown = now;
+		HOST_ADD(swap_time, now - start);
+	}
 	return result;
 }
 

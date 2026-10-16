@@ -11,7 +11,8 @@ again, as devkitPro does, with this folder's patches:
 | `0001-newlib-timespec_get.patch` | Builds with today's newlib, which has its own `timespec_get` |
 | `0002-glthread.patch` | Gives contexts their GL thread hooks again (devkitPro's patch leaves `start_thread` and `thread_finish` out on the Switch), gives the GL thread the `set_background_context` it needs, starts it when `mesa_glthread=true` is in the environment (as DRI does for its option), drains it before a context is changed, and moves it to its own core (`mesa_glthread_core`, 1 by default) |
 | `0003-thread-stack.patch` | Gives Mesa's threads a 4 MB stack: one made with `thrd_create` gets libnx's small default stack, taken from the heap, and the GL thread, which runs the GLSL compiler, ran off its end and broke the heap (the game crashed in `malloc` as it set up its renderer) |
-| `0004-shader-cache.patch` | Mesa's shader cache on the Switch, which devkitPro's build turns off there: its index read into memory (Horizon has no shared file mapping) with only the cache's size written back, no locks (one process), no home directory (only `MESA_GLSL_CACHE_DIR`), `stat` for newlib's missing `fstatat`, and an identity of Mesa's version and build time for a static program |
+| `0004-shader-cache.patch` | Mesa's shader cache on the Switch, which devkitPro's build turns off there: its index read into memory (Horizon has no shared file mapping), with the cache's size and each key it stores written back (without the keys, which let the GLSL compiler skip a shader it has seen, every shader was compiled again in each run), no locks (one process), no home directory (only `MESA_GLSL_CACHE_DIR`), `stat` for newlib's missing `fstatat`, and an identity of Mesa's version and build time for a static program |
+| `0005-nvc0-code-cache.patch` | A cache of nouveau's GPU code: Mesa's shader cache keeps the GLSL compiler's work, but nouveau translated every shader to the GPU's code again in each run (`nv50_ir_generate_code`), as the game first drew with it. A translation, keyed by its TGSI tokens and the program before it, is kept in `nvc0_code.bin` in the cache's folder (read whole when the first shader is made, appended to after each new one, at most 64 MB, each entry with a checksum, begun again for another build), with its fixups' functions as indices into the GM107 emitter's |
 
 Nothing of Mesa is kept in the repository: the script downloads Mesa
 20.1.0-rc3 and devkitPro's recipe (`switch/mesa` of
@@ -41,8 +42,8 @@ make -C port/switch/host                # links it when it is there
 
 The host sets `MESA_GLSL_CACHE_DIR` to `sdmc:/switch/opence/shader_cache`
 (at most 256 MB) before EGL starts, so that a shader compiled once (the
-GLSL front end's work, which ran on the game's main thread) is read back
-in later runs; an empty file `sdmc:/switch/opence/no_shader_cache` turns
+GLSL front end's work, which ran on the game's main thread, and nouveau's
+translation to GPU code, `nvc0_code.bin`) is read back in later runs; an empty file `sdmc:/switch/opence/no_shader_cache` turns
 it off. It links zlib, which the cache compresses with.
 
 The host (`port/switch/host/host_gl.c`) sets `mesa_glthread=true` before it

@@ -67,6 +67,18 @@ struct host_activity
 	volatile uint64_t fence_time;
 	volatile uint64_t readback_time;
 	volatile uint64_t swap_time;
+	/* the frames' pacing (host_gl.c): the game's own work between one
+	frame's swap and the next (without the limit's wait; with V-Sync, with
+	the wait for a free buffer, which Mesa makes at the next frame's first
+	draw), the frames whose work took longer than a display refresh, the
+	frames shown 20 and 34 ms or more after the one before, and the
+	longest of each since the heartbeat last read them (nanoseconds) */
+	volatile uint64_t work_time;
+	volatile uint64_t over_budget;
+	volatile uint64_t late_frames;
+	volatile uint64_t long_frames;
+	volatile uint64_t longest_work;
+	volatile uint64_t longest_frame;
 };
 
 static inline uint64_t host_now(void)
@@ -198,6 +210,7 @@ void host_profile_stop(void);
 void host_profile_start(void);
 void host_profile_report(void);
 void host_profile_syscall(long long number);
+void host_profile_frame(uint64_t start, uint64_t end);
 
 /* host_imports.c */
 void *host_resolve_import(const char *name, uint32_t index);

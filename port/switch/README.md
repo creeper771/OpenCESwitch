@@ -57,7 +57,7 @@ The screen shows the host's log until the game opens its window.
 heartbeat every 5 seconds: what the game did, where its time went, and a
 profile of its main thread), `profile.txt` (every sample of the main
 thread since the start, written every minute: its count, where the
-thread was, and up to seven callers from its frame records; `guest` addresses are for
+thread was, and up to eleven callers from its frame records; `guest` addresses are for
 `llvm-symbolizer --obj=build/android/halo_guest.elf`, `host` offsets for
 `aarch64-none-elf-addr2line -f -e build/switch/opence.elf`),
 the game's `debug.txt` and `config.toml`, and `save/` (the Xbox's `z:` and

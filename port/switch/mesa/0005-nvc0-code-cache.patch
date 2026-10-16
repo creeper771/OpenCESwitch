@@ -1,0 +1,462 @@
+--- a/src/gallium/drivers/nouveau/codegen/nv50_ir_emit_gm107.cpp
++++ b/src/gallium/drivers/nouveau/codegen/nv50_ir_emit_gm107.cpp
+@@ -4611,3 +4611,64 @@
+ }
+ 
+ } // namespace nv50_ir
++
++#ifdef __SWITCH__
++/* For nvc0's code cache (nvc0_program.c): the sizes of a program's
++ * relocation and fixup records, and its fixups' functions as indices into
++ * this emitter's (the Switch's GM20B is a GM107-family GPU), which a file can
++ * hold, and back. A fixup of another function cannot be stored.
++ */
++static const nv50_ir::FixupApply gm107_fixup_functions[] = {
++   nv50_ir::interpApply,
++   nv50_ir::selpFlip,
++};
++
++extern "C" size_t
++nv50_ir_switch_relocs_size(const void *data)
++{
++   const nv50_ir::RelocInfo *info = (const nv50_ir::RelocInfo *)data;
++
++   return info ? sizeof(*info) + info->count * sizeof(info->entry[0]) : 0;
++}
++
++extern "C" size_t
++nv50_ir_switch_fixups_size(const void *data)
++{
++   const nv50_ir::FixupInfo *info = (const nv50_ir::FixupInfo *)data;
++
++   return info ? sizeof(*info) + info->count * sizeof(info->entry[0]) : 0;
++}
++
++extern "C" bool
++nv50_ir_switch_fixups_store(void *data)
++{
++   nv50_ir::FixupInfo *info = (nv50_ir::FixupInfo *)data;
++
++   for (uint32_t i = 0; info && i < info->count; i++) {
++      uintptr_t index;
++
++      for (index = 0; index < ARRAY_SIZE(gm107_fixup_functions); index++)
++         if (info->entry[i].apply == gm107_fixup_functions[index])
++            break;
++      if (index == ARRAY_SIZE(gm107_fixup_functions))
++         return false;
++      info->entry[i].apply = (nv50_ir::FixupApply)index;
++   }
++   return true;
++}
++
++extern "C" bool
++nv50_ir_switch_fixups_load(void *data)
++{
++   nv50_ir::FixupInfo *info = (nv50_ir::FixupInfo *)data;
++
++   for (uint32_t i = 0; info && i < info->count; i++) {
++      uintptr_t index = (uintptr_t)info->entry[i].apply;
++
++      if (index >= ARRAY_SIZE(gm107_fixup_functions))
++         return false;
++      info->entry[i].apply = gm107_fixup_functions[index];
++   }
++   return true;
++}
++#endif
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_program.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_program.c
+@@ -568,6 +568,382 @@
+ }
+ #endif
+ 
++#ifdef __SWITCH__
++/* nouveau's code cache, on the Switch (port/switch/mesa/0005): Mesa's own
++ * shader cache keeps the GLSL compiler's work, but every run translated each
++ * shader to GPU code again (nv50_ir_generate_code) as the game first drew
++ * with it. A program's translation is a function of its TGSI tokens and of
++ * the program as it was before (zeroed, but for what a variant sets), so
++ * both are the key, and the program after it (its code, relocation and
++ * fixup records, header and fields) is what is kept. Entries are in one
++ * file in $MESA_GLSL_CACHE_DIR, read whole at the first translation and
++ * appended to after each new one; each has a checksum, and the file begins
++ * with an identity of this build, so that one of another build is begun
++ * again.
++ */
++#include <stdio.h>
++#include <unistd.h>
++#include "c11/threads.h"
++#include "tgsi/tgsi_parse.h"
++#include "util/mesa-sha1.h"
++
++size_t nv50_ir_switch_relocs_size(const void *data);
++size_t nv50_ir_switch_fixups_size(const void *data);
++bool nv50_ir_switch_fixups_store(void *data);
++bool nv50_ir_switch_fixups_load(void *data);
++
++#define CODE_CACHE_NAME "nvc0_code.bin"
++#define CODE_CACHE_MAGIC "nvc0 code cache 1\n"
++/* (the file stops growing past this) */
++#define CODE_CACHE_LIMIT (64u << 20)
++/* what of a program translation reads and writes: all but its pipe state */
++#define CODE_CACHE_REGION offsetof(struct nvc0_program, type)
++
++struct code_cache_entry {
++   uint8_t key[20];
++   const uint8_t *data;
++   uint32_t size;
++};
++
++static struct {
++   once_flag once;
++   mtx_t lock;
++   bool usable;
++   FILE *file;
++   uint32_t file_size;
++   uint8_t identity[20];
++   /* (an open-addressed table, its capacity a power of two) */
++   struct code_cache_entry *entries;
++   uint32_t count, capacity;
++   uint32_t hits, misses;
++} code_cache = { ONCE_FLAG_INIT };
++
++static uint32_t
++code_cache_checksum(const uint8_t *data, uint32_t size)
++{
++   uint32_t hash = 2166136261u;
++
++   while (size--)
++      hash = (hash ^ *data++) * 16777619u;
++   return hash;
++}
++
++static struct code_cache_entry *
++code_cache_slot(const uint8_t key[20])
++{
++   uint32_t index;
++
++   memcpy(&index, key, sizeof(index));
++   for (index &= code_cache.capacity - 1;
++        code_cache.entries[index].data &&
++        memcmp(code_cache.entries[index].key, key, 20);
++        index = (index + 1) & (code_cache.capacity - 1)) {
++   }
++   return &code_cache.entries[index];
++}
++
++static void
++code_cache_add(const uint8_t key[20], const uint8_t *data, uint32_t size)
++{
++   struct code_cache_entry *entry;
++
++   if ((code_cache.count + 1) * 2 > code_cache.capacity) {
++      struct code_cache_entry *old = code_cache.entries;
++      uint32_t old_capacity = code_cache.capacity, i;
++
++      code_cache.capacity = old_capacity ? old_capacity * 2 : 1024;
++      code_cache.entries = CALLOC(code_cache.capacity, sizeof(*old));
++      for (i = 0; i < old_capacity; i++)
++         if (old[i].data)
++            *code_cache_slot(old[i].key) = old[i];
++      FREE(old);
++   }
++   entry = code_cache_slot(key);
++   if (!entry->data)
++      code_cache.count++;
++   memcpy(entry->key, key, 20);
++   entry->data = data;
++   entry->size = size;
++}
++
++/* the file's entries: a key, the size and checksum of what follows, and
++ * that; up to the first that is not whole */
++static void
++code_cache_open(void)
++{
++   const char *directory = getenv("MESA_GLSL_CACHE_DIR");
++   char path[512];
++   struct mesa_sha1 sha;
++   uint8_t *contents = NULL;
++   long length = 0;
++   uint32_t at, valid;
++   FILE *file;
++
++   mtx_init(&code_cache.lock, mtx_plain);
++   if (!directory || getenv("MESA_GLSL_CACHE_DISABLE"))
++      return;
++   snprintf(path, sizeof(path), "%s/%s", directory, CODE_CACHE_NAME);
++
++   _mesa_sha1_init(&sha);
++   _mesa_sha1_update(&sha, CODE_CACHE_MAGIC, sizeof(CODE_CACHE_MAGIC));
++   _mesa_sha1_update(&sha, PACKAGE_VERSION " " __DATE__ " " __TIME__,
++                     sizeof(PACKAGE_VERSION " " __DATE__ " " __TIME__));
++   {
++      const uint32_t layout[2] = { sizeof(struct nvc0_program),
++                                   CODE_CACHE_REGION };
++
++      _mesa_sha1_update(&sha, layout, sizeof(layout));
++   }
++   _mesa_sha1_final(&sha, code_cache.identity);
++
++   file = fopen(path, "r+b");
++   if (file && !fseek(file, 0, SEEK_END) && (length = ftell(file)) > 0 &&
++       length < (long)CODE_CACHE_LIMIT * 2 && !fseek(file, 0, SEEK_SET)) {
++      contents = MALLOC(length);
++      if (!contents || fread(contents, 1, length, file) != (size_t)length)
++         length = 0;
++   }
++   valid = 0;
++   if (contents && length >= (long)(sizeof(CODE_CACHE_MAGIC) + 20) &&
++       !memcmp(contents, CODE_CACHE_MAGIC, sizeof(CODE_CACHE_MAGIC)) &&
++       !memcmp(contents + sizeof(CODE_CACHE_MAGIC), code_cache.identity, 20)) {
++      for (at = valid = sizeof(CODE_CACHE_MAGIC) + 20;
++           at + 28 <= (uint32_t)length; at = valid) {
++         uint32_t size, checksum;
++
++         memcpy(&size, contents + at + 20, 4);
++         memcpy(&checksum, contents + at + 24, 4);
++         if (size > (uint32_t)length - at - 28 ||
++             code_cache_checksum(contents + at + 28, size) != checksum)
++            break;
++         code_cache_add(contents + at, contents + at + 28, size);
++         valid = at + 28 + size;
++      }
++   }
++   if (!valid) {
++      /* (none, another build's, or not this cache's: begun again) */
++      FREE(contents);
++      if (file)
++         fclose(file);
++      file = fopen(path, "w+b");
++      if (!file ||
++          fwrite(CODE_CACHE_MAGIC, 1, sizeof(CODE_CACHE_MAGIC), file) !=
++             sizeof(CODE_CACHE_MAGIC) ||
++          fwrite(code_cache.identity, 1, 20, file) != 20) {
++         if (file)
++            fclose(file);
++         fprintf(stderr, "nvc0 code cache: cannot write %s\n", path);
++         return;
++      }
++      valid = sizeof(CODE_CACHE_MAGIC) + 20;
++   } else if ((long)valid < length) {
++      /* (a last entry cut short, as the program was stopped) */
++      fflush(file);
++      ftruncate(fileno(file), valid);
++   }
++   fseek(file, valid, SEEK_SET);
++   code_cache.file = file;
++   code_cache.file_size = valid;
++   code_cache.usable = true;
++   fprintf(stderr, "nvc0 code cache: %u programs in %s (%u KB)\n",
++           code_cache.count, path, valid >> 10);
++}
++
++/* the key of the translation the program is ready for, or false if it is
++ * not one the cache keeps */
++static bool
++code_cache_key(const struct nvc0_program *prog, uint16_t chipset,
++               uint8_t key[20])
++{
++   struct nvc0_program before;
++   struct mesa_sha1 sha;
++
++   call_once(&code_cache.once, code_cache_open);
++   if (!code_cache.usable || prog->pipe.type != PIPE_SHADER_IR_TGSI ||
++       !prog->pipe.tokens || prog->type == PIPE_SHADER_COMPUTE ||
++       prog->pipe.stream_output.num_outputs)
++      return false;
++   memcpy(&before, prog, sizeof(before));
++   before.translated = false;
++   before.code = NULL;
++   before.cp.syms = NULL;
++   before.relocs = NULL;
++   before.fixups = NULL;
++   before.tfb = NULL;
++   before.mem = NULL;
++   _mesa_sha1_init(&sha);
++   _mesa_sha1_update(&sha, code_cache.identity, 20);
++   _mesa_sha1_update(&sha, &chipset, sizeof(chipset));
++   _mesa_sha1_update(&sha, (const uint8_t *)&before + CODE_CACHE_REGION,
++                     sizeof(before) - CODE_CACHE_REGION);
++   _mesa_sha1_update(&sha, prog->pipe.tokens,
++                     tgsi_num_tokens(prog->pipe.tokens) *
++                        sizeof(struct tgsi_token));
++   _mesa_sha1_final(&sha, key);
++   return true;
++}
++
++/* a part of an entry: its size, and that many bytes */
++static const uint8_t *
++code_cache_part(const uint8_t *at, const uint8_t *end, void **copy)
++{
++   uint32_t size;
++
++   *copy = NULL;
++   if (end - at < 4)
++      return NULL;
++   memcpy(&size, at, 4);
++   at += 4;
++   if ((uint32_t)(end - at) < size)
++      return NULL;
++   if (size) {
++      *copy = MALLOC(size);
++      if (!*copy)
++         return NULL;
++      memcpy(*copy, at, size);
++   }
++   return at + size;
++}
++
++/* the program as its translation left it, from the cache */
++static bool
++code_cache_load(struct nvc0_program *prog, const uint8_t key[20])
++{
++   const struct code_cache_entry *entry;
++   const uint8_t *at, *end;
++   struct nvc0_program after;
++   void *code = NULL, *relocs = NULL, *fixups = NULL;
++
++   mtx_lock(&code_cache.lock);
++   entry = code_cache.capacity ? code_cache_slot(key) : NULL;
++   if (!entry || !entry->data) {
++      code_cache.misses++;
++      mtx_unlock(&code_cache.lock);
++      return false;
++   }
++   at = entry->data;
++   end = at + entry->size;
++   if (entry->size < sizeof(after))
++      goto broken;
++   memcpy(&after, at, sizeof(after));
++   at += sizeof(after);
++   if (!(at = code_cache_part(at, end, &code)) ||
++       !(at = code_cache_part(at, end, &relocs)) ||
++       !(at = code_cache_part(at, end, &fixups)) || at != end ||
++       (code ? 0 : after.code_size) ||
++       !nv50_ir_switch_fixups_load(fixups))
++      goto broken;
++   memcpy((uint8_t *)prog + CODE_CACHE_REGION,
++          (const uint8_t *)&after + CODE_CACHE_REGION,
++          sizeof(after) - CODE_CACHE_REGION);
++   prog->code = code;
++   prog->relocs = relocs;
++   prog->fixups = fixups;
++   code_cache.hits++;
++   mtx_unlock(&code_cache.lock);
++   return true;
++
++broken:
++   FREE(code);
++   FREE(relocs);
++   FREE(fixups);
++   code_cache.misses++;
++   mtx_unlock(&code_cache.lock);
++   return false;
++}
++
++/* a new translation, into the cache and its file */
++static void
++code_cache_store(const struct nvc0_program *prog, const uint8_t key[20])
++{
++   size_t relocs_size = nv50_ir_switch_relocs_size(prog->relocs);
++   size_t fixups_size = nv50_ir_switch_fixups_size(prog->fixups);
++   uint32_t size = sizeof(*prog) + 12 + prog->code_size + relocs_size +
++                   fixups_size;
++   struct nvc0_program after;
++   uint8_t *data, *at;
++   uint32_t part, checksum;
++
++   if (prog->tfb || prog->cp.syms || (prog->code_size && !prog->code))
++      return;
++   data = MALLOC(size);
++   if (!data)
++      return;
++   memcpy(&after, prog, sizeof(after));
++   after.translated = false;
++   after.code = NULL;
++   after.relocs = NULL;
++   after.fixups = NULL;
++   after.mem = NULL;
++   at = data;
++   memcpy(at, &after, sizeof(after));
++   at += sizeof(after);
++   part = prog->code_size;
++   memcpy(at, &part, 4);
++   memcpy(at + 4, prog->code, part);
++   at += 4 + part;
++   part = relocs_size;
++   memcpy(at, &part, 4);
++   memcpy(at + 4, prog->relocs, part);
++   at += 4 + part;
++   part = fixups_size;
++   memcpy(at, &part, 4);
++   memcpy(at + 4, prog->fixups, part);
++   if (fixups_size && !nv50_ir_switch_fixups_store(at + 4)) {
++      FREE(data);
++      return;
++   }
++
++   mtx_lock(&code_cache.lock);
++   if (code_cache.capacity && code_cache_slot(key)->data) {
++      mtx_unlock(&code_cache.lock);
++      FREE(data);
++      return;
++   }
++   code_cache_add(key, data, size);
++   checksum = code_cache_checksum(data, size);
++   if (code_cache.file && code_cache.file_size + 28 + size <= CODE_CACHE_LIMIT) {
++      if (fwrite(key, 1, 20, code_cache.file) != 20 ||
++          fwrite(&size, 1, 4, code_cache.file) != 4 ||
++          fwrite(&checksum, 1, 4, code_cache.file) != 4 ||
++          fwrite(data, 1, size, code_cache.file) != size ||
++          fflush(code_cache.file)) {
++         /* (the rest of this run's are kept in memory only) */
++         fclose(code_cache.file);
++         code_cache.file = NULL;
++      } else {
++         code_cache.file_size += 28 + size;
++      }
++   }
++   if (code_cache.misses % 64 == 1)
++      fprintf(stderr, "nvc0 code cache: %u found, %u translated, %u kept\n",
++              code_cache.hits, code_cache.misses, code_cache.count);
++   mtx_unlock(&code_cache.lock);
++}
++
++static bool
++nvc0_program_translate_compiled(struct nvc0_program *prog, uint16_t chipset,
++                                struct pipe_debug_callback *debug);
++
++bool
++nvc0_program_translate(struct nvc0_program *prog, uint16_t chipset,
++                       struct pipe_debug_callback *debug)
++{
++   uint8_t key[20];
++   bool cached = code_cache_key(prog, chipset, key);
++
++   if (cached && code_cache_load(prog, key))
++      return true;
++   if (!nvc0_program_translate_compiled(prog, chipset, debug))
++      return false;
++   if (cached)
++      code_cache_store(prog, key);
++   return true;
++}
++
++/* (Mesa's translation) */
++#define nvc0_program_translate nvc0_program_translate_compiled
++#endif
+ bool
+ nvc0_program_translate(struct nvc0_program *prog, uint16_t chipset,
+                        struct pipe_debug_callback *debug)
+@@ -731,6 +1107,9 @@
+    FREE(info);
+    return !ret;
+ }
++#ifdef __SWITCH__
++#undef nvc0_program_translate
++#endif
+ 
+ static inline int
+ nvc0_program_alloc_code(struct nvc0_context *nvc0, struct nvc0_program *prog)

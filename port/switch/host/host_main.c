@@ -195,6 +195,19 @@ static void heartbeat(void *unused)
 				(unsigned long long)((now.fence_time - last.fence_time) / 1000000),
 				(unsigned long long)((now.readback_time - last.readback_time) / 1000000),
 				(unsigned long long)((now.swap_time - last.swap_time) / 1000000));
+		if (now.frames != last.frames)
+		{
+			uint64_t frames = now.frames - last.frames;
+			uint64_t longest_work = __atomic_exchange_n(&host_activity.longest_work, 0, __ATOMIC_RELAXED);
+			uint64_t longest_frame = __atomic_exchange_n(&host_activity.longest_frame, 0, __ATOMIC_RELAXED);
+
+			host_logf(HOST_LOG_INFO, "  pacing: work %.1f ms a frame (longest %.1f), %llu over 16.7 ms; "
+				"shown %llu after 20 ms or more, %llu after 34 ms or more (longest %.1f)",
+				(double)(now.work_time - last.work_time) / 1e6 / (double)frames, (double)longest_work / 1e6,
+				(unsigned long long)(now.over_budget - last.over_budget),
+				(unsigned long long)(now.late_frames - last.late_frames),
+				(unsigned long long)(now.long_frames - last.long_frames), (double)longest_frame / 1e6);
+		}
 		host_profile_report();
 		last = now;
 	}
@@ -322,6 +335,8 @@ int main(int argc, char **argv)
 	log_file = fopen(HOST_LOG_PATH, "w");
 	/* what libraries report there (Mesa's warnings, its shader cache's) */
 	freopen(HOST_STDERR_PATH, "w", stderr);
+	/* (a line at a time: the process ends without flushing it) */
+	setvbuf(stderr, NULL, _IOLBF, 0);
 	host_logf(HOST_LOG_INFO, "OpenCE for the Switch (bring-up host)");
 
 	type = appletGetAppletType();

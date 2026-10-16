@@ -314,3 +314,22 @@
     }
  }
  
+@@ -1290,7 +1399,18 @@
+ 
+    entry = &cache->stored_keys[i * CACHE_KEY_SIZE];
+ 
++#ifdef __SWITCH__
++   /* (and into the index file, whose keys a later run reads: without them
++    * every shader was compiled again in each run) */
++   if (memcmp(entry, key, CACHE_KEY_SIZE) == 0)
++      return;
+    memcpy(entry, key, CACHE_KEY_SIZE);
++   if (lseek(cache->index_fd, entry - (unsigned char *)cache->index_mmap,
++             SEEK_SET) >= 0)
++      write(cache->index_fd, key, CACHE_KEY_SIZE);
++#else
++   memcpy(entry, key, CACHE_KEY_SIZE);
++#endif
+ }
+ 
+ /* This function lets us test whether a given key was previously
