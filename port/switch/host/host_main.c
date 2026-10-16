@@ -300,6 +300,7 @@ static void *read_file(const char *path, size_t *size)
 and how its applet's exit ends the process */
 void NX_NORETURN __libnx_exit(int code);
 extern u32 __nx_applet_exit_mode;
+void disk_cache_switch_finish(void) __attribute__((weak));
 
 int main(int argc, char **argv)
 {
@@ -378,6 +379,11 @@ int main(int argc, char **argv)
 	host_audio_stop();
 	host_logf(HOST_LOG_INFO, "shutdown: the game's files");
 	host_files_close();
+	/* (Mesa's shader cache entries still queued, port/switch/mesa/0006: not
+	in the system's switch-mesa) */
+	host_logf(HOST_LOG_INFO, "shutdown: the shader cache");
+	if (disk_cache_switch_finish)
+		disk_cache_switch_finish();
 	/* (OpenGL ES and the game's memory are left to the process's end: with
 	Mesa's GL thread, EGL's own shutdown waited for that thread, which was
 	stuck, and the game froze as it quit) */

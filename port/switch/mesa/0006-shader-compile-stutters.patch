@@ -1,0 +1,221 @@
+--- a/src/util/disk_cache.c
++++ b/src/util/disk_cache.c
+@@ -61,6 +61,9 @@
+ 
+ struct disk_cache;
+ static void index_size_written(struct disk_cache *cache);
++#ifdef __SWITCH__
++void disk_cache_switch_finish(void);
++#endif
+ 
+ /* the bytes a cache file takes: newlib's stat of the SD card does not give
+  * its blocks reliably, so its length there */
+@@ -498,6 +501,30 @@
+    return NULL;
+ }
+ 
++#ifdef __SWITCH__
++/* the index file's writes: the cache's writer thread's (sizes) and the
++ * GL thread's (keys) */
++static once_flag index_lock_once = ONCE_FLAG_INIT;
++static mtx_t index_lock;
++
++static void
++index_lock_init(void)
++{
++   mtx_init(&index_lock, mtx_plain);
++}
++
++static void
++index_write(struct disk_cache *cache, off_t offset, const void *data,
++            size_t size)
++{
++   call_once(&index_lock_once, index_lock_init);
++   mtx_lock(&index_lock);
++   if (lseek(cache->index_fd, offset, SEEK_SET) == offset)
++      write(cache->index_fd, data, size);
++   mtx_unlock(&index_lock);
++}
++#endif
++
+ /* the cache's size, after it changed, into the index file (on the Switch,
+ whose index is not a shared mapping of the file) */
+ static void
+@@ -506,8 +533,7 @@
+ #ifdef __SWITCH__
+    uint64_t size = *cache->size;
+ 
+-   if (lseek(cache->index_fd, 0, SEEK_SET) == 0)
+-      write(cache->index_fd, &size, sizeof(size));
++   index_write(cache, 0, &size, sizeof(size));
+ #else
+    (void)cache;
+ #endif
+@@ -518,6 +544,7 @@
+ {
+    if (cache && !cache->path_init_failed) {
+ #ifdef __SWITCH__
++      disk_cache_switch_finish();
+       close(cache->index_fd);
+ #else
+       util_queue_finish(&cache->cache_queue);
+@@ -1164,6 +1191,115 @@
+    free(filename);
+ }
+ 
++#ifdef __SWITCH__
++/* Entries are written by a thread of the cache's (on core 2, below the
++ * application's threads, as Mesa's threads start: u_thread.h), so that a
++ * program's first link does not also wait for the SD card: the writes were
++ * 14% of the frames that stuttered as new programs were linked. The host
++ * waits for the queue before the process's services close
++ * (disk_cache_switch_finish), which a thread still writing had broken.
++ */
++struct switch_put {
++   struct switch_put *next;
++   struct disk_cache_put_job *job;
++};
++
++static struct {
++   once_flag once;
++   mtx_t lock;
++   cnd_t work, idle;
++   struct switch_put *head, *tail;
++   bool started, busy;
++   thrd_t thread;
++} switch_put_queue = { ONCE_FLAG_INIT };
++
++static int
++switch_put_writer(void *unused)
++{
++   (void)unused;
++   for (;;) {
++      struct switch_put *put;
++
++      mtx_lock(&switch_put_queue.lock);
++      while (!switch_put_queue.head)
++         cnd_wait(&switch_put_queue.work, &switch_put_queue.lock);
++      put = switch_put_queue.head;
++      switch_put_queue.head = put->next;
++      if (!switch_put_queue.head)
++         switch_put_queue.tail = NULL;
++      switch_put_queue.busy = true;
++      mtx_unlock(&switch_put_queue.lock);
++
++      cache_put(put->job, 0);
++      destroy_put_job(put->job, 0);
++      free(put);
++
++      mtx_lock(&switch_put_queue.lock);
++      switch_put_queue.busy = false;
++      if (!switch_put_queue.head)
++         cnd_broadcast(&switch_put_queue.idle);
++      mtx_unlock(&switch_put_queue.lock);
++   }
++   return 0;
++}
++
++static void
++switch_put_queue_start(void)
++{
++   mtx_init(&switch_put_queue.lock, mtx_plain);
++   cnd_init(&switch_put_queue.work);
++   cnd_init(&switch_put_queue.idle);
++   switch_put_queue.started =
++      thrd_create(&switch_put_queue.thread, switch_put_writer, NULL) ==
++         thrd_success;
++}
++
++static void
++switch_put_queue_add(struct disk_cache_put_job *job)
++{
++   struct switch_put *put;
++
++   call_once(&switch_put_queue.once, switch_put_queue_start);
++   put = switch_put_queue.started ? malloc(sizeof(*put)) : NULL;
++   if (!put) {
++      /* (no thread: written here) */
++      cache_put(job, 0);
++      destroy_put_job(job, 0);
++      return;
++   }
++   put->next = NULL;
++   put->job = job;
++   mtx_lock(&switch_put_queue.lock);
++   if (switch_put_queue.tail)
++      switch_put_queue.tail->next = put;
++   else
++      switch_put_queue.head = put;
++   switch_put_queue.tail = put;
++   cnd_signal(&switch_put_queue.work);
++   mtx_unlock(&switch_put_queue.lock);
++}
++
++/* returns once every entry queued is written, or after two seconds (the
++ * host's shutdown) */
++void
++disk_cache_switch_finish(void)
++{
++   struct timespec until;
++
++   if (!switch_put_queue.started)
++      return;
++   clock_gettime(CLOCK_REALTIME, &until);
++   until.tv_sec += 2;
++   mtx_lock(&switch_put_queue.lock);
++   while (switch_put_queue.head || switch_put_queue.busy) {
++      if (cnd_timedwait(&switch_put_queue.idle, &switch_put_queue.lock,
++                        &until) == thrd_timedout)
++         break;
++   }
++   mtx_unlock(&switch_put_queue.lock);
++}
++#endif
++
+ void
+ disk_cache_put(struct disk_cache *cache, const cache_key key,
+                const void *data, size_t size,
+@@ -1182,11 +1318,7 @@
+ 
+    if (dc_job) {
+ #ifdef __SWITCH__
+-      /* (written here, not by a thread of the cache's: one could still be
+-       * writing to the SD card when the process's services close, and it
+-       * held the card's file system while the game read from it) */
+-      cache_put(dc_job, 0);
+-      destroy_put_job(dc_job, 0);
++      switch_put_queue_add(dc_job);
+ #else
+       util_queue_fence_init(&dc_job->fence);
+       util_queue_add_job(&cache->cache_queue, dc_job, &dc_job->fence,
+@@ -1405,9 +1537,8 @@
+    if (memcmp(entry, key, CACHE_KEY_SIZE) == 0)
+       return;
+    memcpy(entry, key, CACHE_KEY_SIZE);
+-   if (lseek(cache->index_fd, entry - (unsigned char *)cache->index_mmap,
+-             SEEK_SET) >= 0)
+-      write(cache->index_fd, key, CACHE_KEY_SIZE);
++   index_write(cache, entry - (unsigned char *)cache->index_mmap, key,
++               CACHE_KEY_SIZE);
+ #else
+    memcpy(entry, key, CACHE_KEY_SIZE);
+ #endif
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c
+@@ -349,7 +349,16 @@
+    case PIPE_CAP_PCI_FUNCTION:
+    case PIPE_CAP_TGSI_CAN_READ_OUTPUTS:
+    case PIPE_CAP_NATIVE_FENCE_FD:
++#ifdef __SWITCH__
++      return 0;
++   /* (the GLSL compiler's optimisations once, not until nothing changes:
++    * nv50_ir optimises the code again, and those passes were a fifth of the
++    * frames that stuttered as the game's new programs were compiled) */
+    case PIPE_CAP_GLSL_OPTIMIZE_CONSERVATIVELY:
++      return 1;
++#else
++   case PIPE_CAP_GLSL_OPTIMIZE_CONSERVATIVELY:
++#endif
+    case PIPE_CAP_SPARSE_BUFFER_PAGE_SIZE:
+    case PIPE_CAP_NIR_SAMPLERS_AS_DEREF:
+    case PIPE_CAP_MEMOBJ:

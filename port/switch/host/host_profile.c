@@ -65,6 +65,8 @@ was taken, and those of the frames that took HITCH_NANOSECONDS or more */
 #define HITCH_NANOSECONDS 100000000ULL
 #define RECENT_SIZE 4096
 #define HITCHES_SIZE 16384
+/* the files' buffer */
+#define WRITE_BUFFER_SIZE (256 * 1024)
 
 static uint64_t recent_chains[RECENT_SIZE][CHAIN_DEPTH];
 static uint64_t recent_times[RECENT_SIZE];
@@ -174,6 +176,9 @@ static void chains_write(const struct chain_table *table, const char *path, cons
 	file = fopen(new_path, "w");
 	if (!file)
 		return;
+	/* (in large pieces: with newlib's own small buffer, a file of 10 MB was
+	thousands of writes to the SD card, and took up to 40 s) */
+	setvbuf(file, NULL, _IOFBF, WRITE_BUFFER_SIZE);
 	fprintf(file, "# %s: count, where, then its callers\n# %u samples\n", heading, table->total);
 	for (index = 0; index < table->size; index++)
 	{
@@ -195,14 +200,19 @@ static void chains_write(const struct chain_table *table, const char *path, cons
 }
 
 /* a frame from start to end (host_now), which the game has presented: its
-samples, if it took HITCH_NANOSECONDS or more, into the hitches' table */
+samples, if it took HITCH_NANOSECONDS or more, into the hitches' table. On
+the game's main thread, which never waits for the lock: while the files are
+written (host_profile_report) the frame is not kept, as the game stopped
+until they were. */
 void host_profile_frame(uint64_t start, uint64_t end)
 {
 	uint32_t index;
 
-	if (end - start < HITCH_NANOSECONDS || sampler_thread.handle == INVALID_HANDLE || !sampler_thread.handle)
+	if (end - start < HITCH_NANOSECONDS || sampler_thread.handle == INVALID_HANDLE || !sampler_thread.handle ||
+		!mutexTryLock(&profile_lock))
+	{
 		return;
-	mutexLock(&profile_lock);
+	}
 	for (index = 0; index < RECENT_SIZE; index++)
 	{
 		if (recent_times[index] >= start && recent_times[index] <= end)
