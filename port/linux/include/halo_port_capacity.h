@@ -60,10 +60,13 @@ the Xbox. Halo Custom Edition maps' sounds, converted when they load
 (port/linux/game/custom_edition_sounds.c), and those of sound tags loaded
 over a map's (loose_sounds.c), are longer than the Xbox maps' and fill it (a
 campaign map's dialogue and music did, "SOUND CACHE BLOWN" in debug.txt).
-The desktop builds' cache is 16 MB; Android's and the web build's windows keep
-the Xbox's. */
+The desktop builds' cache is 16 MB, and Android's (the Switch's too) is:
+on a Switch an internet game with many players and many more enemies than
+the campaign's blew the Xbox's (sounds, the music too, are dropped then),
+and the 128 MB window had 51 MB free at the most it held (xbox_memory.c's
+log). The web build's window keeps the Xbox's. */
 
-#if defined(HALO_ARM64_GUEST) || defined(HALO_WEB)
+#if defined(HALO_WEB)
 #define HALO_PORT_SOUND_CACHE_SIZE 0x400000 /* (0x400000) */
 #else
 #define HALO_PORT_SOUND_CACHE_SIZE 0x1000000 /* (0x400000) */

@@ -47,6 +47,12 @@ first page of a block also records the block length */
 static DWORD page_protection[CONTIGUOUS_PAGE_COUNT];
 static unsigned long block_page_count[CONTIGUOUS_PAGE_COUNT];
 static BOOL arena_reserved = FALSE;
+/* the window's pages in use, and the most of them so far, logged at each
+CONTIGUOUS_LOG_STEP more (with the largest free block then): how much room
+the window has (halo_port_capacity.h sizes the caches it holds) */
+static unsigned long used_page_count;
+static unsigned long logged_page_count;
+#define CONTIGUOUS_LOG_STEP (0x400000UL / PAGE_SIZE_BYTES)
 static pthread_mutex_t arena_lock = PTHREAD_MUTEX_INITIALIZER;
 static void *custom_edition_tag_cache = NULL;
 
@@ -219,6 +225,21 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	for (page = first; page < first + count; page++)
 		page_protection[page] = protect;
 	block_page_count[first] = count;
+	used_page_count += count;
+	if (used_page_count >= logged_page_count + CONTIGUOUS_LOG_STEP)
+	{
+		unsigned long largest = 0, run = 0;
+
+		for (page = 0; page < CONTIGUOUS_PAGE_COUNT; page++)
+		{
+			run = page_protection[page] ? 0 : run + 1;
+			if (run > largest)
+				largest = run;
+		}
+		logged_page_count = used_page_count - used_page_count % CONTIGUOUS_LOG_STEP;
+		platform_log("contiguous memory: %lu of %lu MB in use, the most so far (largest free block %lu MB)",
+			used_page_count * PAGE_SIZE_BYTES >> 20, PLATFORM_CONTIGUOUS_SIZE >> 20, largest * PAGE_SIZE_BYTES >> 20);
+	}
 	pthread_mutex_unlock(&arena_lock);
 	return address;
 }
@@ -242,6 +263,7 @@ void platform_contiguous_free(void *address)
 		for (page = first; page < first + count; page++)
 			page_protection[page] = 0;
 		block_page_count[first] = 0;
+		used_page_count -= count;
 	}
 	pthread_mutex_unlock(&arena_lock);
 }
