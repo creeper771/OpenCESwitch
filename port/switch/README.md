@@ -64,6 +64,21 @@ the game's `debug.txt` and `config.toml`, and `save/` (the Xbox's `z:` and
 `u:`). The first start writes the game's cache files to `save/z` (about
 760 MB), which takes a few minutes on an SD card.
 
+### A HOME menu entry (optional)
+
+OpenCE can also be started from the HOME menu, with no title takeover,
+through an NSP forwarder: a small installed title that launches
+`sdmc:/switch/opence/opence.nro` as a full application. A forwarder is made
+from the NRO with a tool such as NTON (on a computer) or
+switch-nsp-forwarder (on the console). The project does not ship one: making
+one takes the console's own keys (dumped with Lockpick_RCM), installing it
+takes signature patches (which a firmware or Atmosphère update can break;
+the sys-patch module keeps them current) and an installer, and an
+unofficial title installed on a console that connects to Nintendo's
+servers risks a ban. On an emuMMC kept from those servers (Atmosphère's DNS
+redirection) the risk is much smaller; OpenCE's network play does not use
+them. Whether to make one is the player's choice.
+
 ## Controllers
 
 Controllers connected before OpenCE starts are players 1 to 4. Holding -
