@@ -29,8 +29,9 @@ A multiplayer map gets them too, for its in-game pause menu's SETTINGS
 pictures, sounds and screens) are none, a missing picture drawn blank, and
 no screen pauses the game (a network game's clock runs on).
 
-So does a single-player campaign's map (pause_campaign_patch), whose screens
-pause it as its pause menu does.
+So does a campaign's map (pause_campaign_patch), by one player or in split
+screen, whose screens pause the game as its pause menu does, or in network
+co-op, where they do not.
 */
 
 #include "cseries.h"
@@ -382,7 +383,7 @@ static char const *const port_function_names[] =
 	"player profile save changes",
 	/* (the server browser's password screen) */
 	"port password init", "port password edit", "port password join", "port password back",
-	/* (Gamepads' OK in a single-player campaign: pause_settings_patch) */
+	/* (Gamepads' OK in a campaign: pause_settings_patch) */
 	"port profile settings save",
 	/* (a new profile's screens: Settings' is then being edited, which the
 	Xbox's leaves to its own screens) */
@@ -445,8 +446,10 @@ static struct
 	/* a game map's build (the pause menu's SETTINGS): what the map has not
 	got is none, not a failure */
 	boolean game_map;
-	/* a single-player campaign's map's, whose screens pause the game */
+	/* a campaign's map's, whose screens pause the game but in a network
+	game (network co-op's), where the clock runs on */
 	boolean campaign;
+	boolean network;
 } build;
 
 /* ---------- private code */
@@ -1119,7 +1122,7 @@ static void *widget_build(long widget_index)
 	definition->flags = flags_parse(source->flags, widget_flag_names, NUMBEROF(widget_flag_names),
 		source->file, source->line);
 	/* (in a network game the clock runs on) */
-	if (build.game_map && !build.campaign)
+	if (build.game_map && (!build.campaign || build.network))
 		definition->flags &= ~FLAG(1); /* pause_game */
 	definition->milliseconds_to_auto_close = source->auto_close;
 	definition->auto_close_fade_time = source->auto_close_fade;
@@ -1749,7 +1752,7 @@ static void pause_patch(struct cache_file_tag_instance *instances)
 		platform_log("menus: the pause menu has SETTINGS%s", host ? " and END GAME" : "");
 }
 
-/* ---------- the single-player campaign's pause menu
+/* ---------- the campaign's pause menu
 
 Its list gets the same SETTINGS (pause_list_patch) before REVERT TO SAVED, a
 copy of it. The rows use the PC version's pause menu's pitch, so a
@@ -2031,13 +2034,14 @@ static void pause_campaign_patch(struct cache_file_tag_instance *instances)
 	}
 }
 
-/* the campaign played here by one player: not network co-op, nor split
-screen */
-static boolean single_player_campaign_map(void)
+/* the campaign played here: by one player, in split screen or network
+co-op (whose pause menu's SETTINGS, as a multiplayer game's, opens while the
+game goes on), not a film played back */
+static boolean campaign_map(void)
 {
 	return tag_loaded('Soul', MULTIPLAYER_COLLECTION) == NONE &&
 		tag_loaded(UI_WIDGET_DEFINITION_TAG, CAMPAIGN_PAUSE_SCREEN) != NONE &&
-		game_connection() == _game_connection_local && !network_game_is_active() && !game_is_cooperative();
+		game_connection() != _game_connection_film_playback;
 }
 
 /* whether display.menus asks for the PC version's menus: "pc" in any case
@@ -2065,10 +2069,10 @@ void menu_tags_loaded(
 	long widget_count, own_lists = 0, total, index;
 
 	boolean game_map = strcmp(map_name, "ui") != 0;
-	boolean campaign = game_map && single_player_campaign_map();
+	boolean campaign = game_map && campaign_map();
 
 	/* (ui.map, and a multiplayer map: its pause menu's SETTINGS; a
-	single-player campaign's too) */
+	campaign's too) */
 	if ((game_map && tag_loaded('Soul', MULTIPLAYER_COLLECTION) == NONE && !campaign) ||
 		!menus_pc_chosen())
 	{
@@ -2081,6 +2085,7 @@ void menu_tags_loaded(
 	build.menus = menus;
 	build.game_map = game_map;
 	build.campaign = campaign;
+	build.network = network_game_is_active();
 	widget_count = menus->widget_count;
 	build.widget_tags = malloc((widget_count + 1) * sizeof(long));
 	build.text_tags = malloc((widget_count + 1) * sizeof(long));

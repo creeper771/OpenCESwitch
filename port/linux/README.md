@@ -291,11 +291,12 @@ stay. The Xbox's pause box is drawn taller to hold them (a redraw,
 what is below its list moves down. The few pictures of the settings that
 come from the main menu's map are not drawn there.
 
-In a single-player campaign, the pause menu has SETTINGS too, before REVERT
-TO SAVED, in the same box: a list with room for it centres its rows, and
-one without keeps its size, its rows closer. It opens the same settings,
-while the game stays paused, with only Controls, Gamepads, Mouse, Audio and
-Video Setup; Gamepads' OK saves the profile at once.
+In a campaign, the pause menu has SETTINGS too, before REVERT TO SAVED, in
+the same box: a list with room for it centres its rows, and one without
+keeps its size, its rows closer. It opens the same settings, with only
+Controls, Gamepads, Mouse, Audio and Video Setup; Gamepads' OK saves the
+profile at once. The game stays paused while they are open, but in network
+co-op, where its clock runs on, as in a multiplayer game.
 
 The menus are XML files in `port/assets/menus` (`tools/ce_menus.py` writes
 them from the PC version's tags), which the game contains. To change them,
