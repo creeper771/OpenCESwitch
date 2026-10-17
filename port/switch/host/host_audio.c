@@ -12,8 +12,13 @@ the buffer's worth, takes what the game put into the stream
 and queues it. It runs above the guest's priority, so that the game's busy
 threads never starve the sound.
 
-A stream without a callback (the microphone's, for voice chat) is not
-supported: opening one fails, as on a machine without a microphone.
+A stream without a callback is the microphone's, for voice chat
+(port/linux/src/voice_audio.c: 48 kHz, mono, 32-bit float, read with
+SDL_GetAudioStreamData): libnx's audin, the system's default input (a
+headset's microphone in the headphone jack, or a USB one), captured on a
+host thread of its own into the stream, as the game's format, which the
+game takes from it. Opening it fails, as on a machine without a
+microphone, if the system has no input.
 */
 
 #include "host.h"
@@ -33,6 +38,13 @@ time with 1024-frame buffers: smaller ones keep it shorter. */
 #define BUFFER_COUNT 6
 #define BUFFER_BYTES ((FRAMES * CHANNELS * sizeof(int16_t) + 0xfff) & ~(size_t)0xfff)
 #define STREAM_COUNT 4
+/* the microphone's audin buffers (about 21 ms each, a voice frame's worth,
+stereo 16-bit as the system gives them), and how much of it the stream
+keeps for the game at most (a second of mono float: older is dropped) */
+#define IN_FRAMES 1024
+#define IN_BUFFER_COUNT 4
+#define IN_BUFFER_BYTES ((IN_FRAMES * 2 * sizeof(int16_t) + 0xfff) & ~(size_t)0xfff)
+#define IN_KEPT_BYTES (RATE * 2 * (int)sizeof(float))
 #define AUDIO_STACK_SIZE (256 * 1024)
 #define AUDIO_PRIORITY 0x2c
 
@@ -52,11 +64,16 @@ struct audio_stream
 	volatile int running;
 	volatile int quit;
 	Mutex lock;
-	/* what the guest put into the stream, not yet queued */
+	/* what the guest put into the stream, not yet queued (the microphone's:
+	what it captured, not yet taken) */
 	float *pending;
 	int pending_bytes;
 	int pending_size;
 	AudioOutBuffer buffers[BUFFER_COUNT];
+	/* the microphone's: its channels, as the guest asked, and its buffers */
+	int recording;
+	int channels;
+	AudioInBuffer in_buffers[IN_BUFFER_COUNT];
 };
 
 static struct audio_stream *streams[STREAM_COUNT];
@@ -148,6 +165,190 @@ static void audio_thread(void *context)
 	free(stream);
 }
 
+/* ---------- the microphone */
+
+static int audin_ready;
+
+/* a captured buffer, as the guest's samples, onto the stream's end */
+static void capture(struct audio_stream *stream, const AudioInBuffer *buffer)
+{
+	const int16_t *input = buffer->buffer;
+	int channels = (int)audinGetChannelCount();
+	int frames, frame, kept;
+	float *output;
+
+	if (channels < 1 || audinGetPcmFormat() != PcmFormat_Int16)
+		return;
+	frames = (int)(buffer->data_size / ((size_t)channels * sizeof(int16_t)));
+	mutexLock(&stream->lock);
+	if (stream->pending_bytes + frames * stream->channels * (int)sizeof(float) > stream->pending_size)
+	{
+		int size = IN_KEPT_BYTES + IN_FRAMES * 2 * (int)sizeof(float);
+		float *pending = realloc(stream->pending, (size_t)size);
+
+		if (!pending)
+		{
+			mutexUnlock(&stream->lock);
+			return;
+		}
+		stream->pending = pending;
+		stream->pending_size = size;
+	}
+	/* (the oldest dropped, if the game has not taken it) */
+	kept = IN_KEPT_BYTES - frames * stream->channels * (int)sizeof(float);
+	if (stream->pending_bytes > kept)
+	{
+		int dropped = (stream->pending_bytes - kept) / (int)sizeof(float) * (int)sizeof(float);
+
+		memmove(stream->pending, (char *)stream->pending + dropped, (size_t)(stream->pending_bytes - dropped));
+		stream->pending_bytes -= dropped;
+	}
+	output = (float *)((char *)stream->pending + stream->pending_bytes);
+	for (frame = 0; frame < frames; frame++)
+	{
+		const int16_t *sample = input + frame * channels;
+		float left = sample[0] / 32768.0f, right = channels > 1 ? sample[1] / 32768.0f : left;
+
+		if (stream->channels == 1)
+			*output++ = (left + right) * 0.5f;
+		else
+		{
+			*output++ = left;
+			*output++ = right;
+		}
+	}
+	stream->pending_bytes += frames * stream->channels * (int)sizeof(float);
+	mutexUnlock(&stream->lock);
+}
+
+static void record_thread(void *context)
+{
+	struct audio_stream *stream = context;
+	int index;
+
+	for (index = 0; index < IN_BUFFER_COUNT; index++)
+		audinAppendAudioInBuffer(&stream->in_buffers[index]);
+	audinStartAudioIn();
+	while (!stream->quit)
+	{
+		AudioInBuffer *released = NULL;
+		u32 count = 0;
+
+		if (R_FAILED(audinWaitCaptureFinish(&released, &count, 100000000ULL)))
+			continue;
+		while (count && released && !stream->quit)
+		{
+			if (stream->running)
+				capture(stream, released);
+			/* (its size is how much to capture next) */
+			released->data_size = IN_FRAMES * audinGetChannelCount() * sizeof(int16_t);
+			audinAppendAudioInBuffer(released);
+			released = NULL;
+			count = 0;
+			if (R_FAILED(audinGetReleasedAudioInBuffer(&released, &count)))
+				break;
+		}
+	}
+	/* (stopping releases the buffers, which may then be freed) */
+	audinStopAudioIn();
+	audinExit();
+	mutexLock(&streams_lock);
+	audin_ready = 0;
+	streams[stream->handle - 1] = NULL;
+	mutexUnlock(&streams_lock);
+	for (index = 0; index < IN_BUFFER_COUNT; index++)
+		free(stream->in_buffers[index].buffer);
+	free(stream->pending);
+	free(stream);
+}
+
+/* the microphone's stream (one at a time), 48 kHz float, mono or stereo */
+static uint32_t open_recording(const struct guest_audio_spec *format)
+{
+	struct audio_stream *stream;
+	uint32_t handle = 0;
+	Result rc;
+	int index;
+
+	if (!format || format->format != SDL_AUDIO_F32 || format->channels < 1 || format->channels > 2 ||
+		format->frequency != RATE)
+	{
+		host_logf(HOST_LOG_WARN, "audio: only 48 kHz float input is supported");
+		return 0;
+	}
+	mutexLock(&streams_lock);
+	for (index = 0; index < STREAM_COUNT && !handle; index++)
+	{
+		if (!streams[index])
+			handle = (uint32_t)index + 1;
+	}
+	if (!handle || audin_ready)
+	{
+		mutexUnlock(&streams_lock);
+		return 0;
+	}
+	rc = audinInitialize();
+	if (R_FAILED(rc))
+	{
+		mutexUnlock(&streams_lock);
+		host_logf(HOST_LOG_WARN, "audio: no microphone (audin 0x%x): a headset in the headphone jack, or a USB one, "
+			"is the Switch's", rc);
+		return 0;
+	}
+	if (audinGetSampleRate() != RATE || audinGetPcmFormat() != PcmFormat_Int16)
+	{
+		host_logf(HOST_LOG_WARN, "audio: the microphone gives %u Hz, format %d: only 48 kHz 16-bit is taken",
+			audinGetSampleRate(), (int)audinGetPcmFormat());
+		audinExit();
+		mutexUnlock(&streams_lock);
+		return 0;
+	}
+	stream = calloc(1, sizeof(*stream));
+	if (!stream)
+	{
+		audinExit();
+		mutexUnlock(&streams_lock);
+		return 0;
+	}
+	stream->handle = handle;
+	stream->recording = 1;
+	stream->channels = format->channels;
+	mutexInit(&stream->lock);
+	for (index = 0; index < IN_BUFFER_COUNT; index++)
+	{
+		stream->in_buffers[index].buffer = aligned_alloc(0x1000, IN_BUFFER_BYTES);
+		stream->in_buffers[index].buffer_size = IN_BUFFER_BYTES;
+		stream->in_buffers[index].data_size = IN_FRAMES * audinGetChannelCount() * sizeof(int16_t);
+		if (!stream->in_buffers[index].buffer)
+		{
+			while (index >= 0)
+				free(stream->in_buffers[index--].buffer);
+			free(stream);
+			audinExit();
+			mutexUnlock(&streams_lock);
+			return 0;
+		}
+	}
+	streams[handle - 1] = stream;
+	audin_ready = 1;
+	mutexUnlock(&streams_lock);
+	if (host_native_thread_create(record_thread, stream, AUDIO_STACK_SIZE, AUDIO_PRIORITY) != 0)
+	{
+		mutexLock(&streams_lock);
+		streams[handle - 1] = NULL;
+		audin_ready = 0;
+		mutexUnlock(&streams_lock);
+		for (index = 0; index < IN_BUFFER_COUNT; index++)
+			free(stream->in_buffers[index].buffer);
+		free(stream);
+		audinExit();
+		return 0;
+	}
+	host_logf(HOST_LOG_INFO, "audio: microphone through audin (%u Hz, %u channels)", audinGetSampleRate(),
+		audinGetChannelCount());
+	return handle;
+}
+
 uint32_t host_sdl_open_audio_stream(uint32_t device, const void *spec, uint32_t callback, uint32_t userdata)
 {
 	const struct guest_audio_spec *format = spec;
@@ -157,7 +358,9 @@ uint32_t host_sdl_open_audio_stream(uint32_t device, const void *spec, uint32_t 
 	int index;
 
 	(void)device;
-	if (!callback || !format || format->format != SDL_AUDIO_F32 || format->channels != CHANNELS ||
+	if (!callback)
+		return open_recording(format);
+	if (!format || format->format != SDL_AUDIO_F32 || format->channels != CHANNELS ||
 		format->frequency != RATE)
 	{
 		host_logf(HOST_LOG_WARN, "audio: only 48 kHz stereo float output is supported");
@@ -263,20 +466,35 @@ int host_sdl_resume_audio_stream_device(uint32_t handle)
 	return 1;
 }
 
-/* (only for streams the guest reads, the microphone's, which are not
-supported) */
+/* (the microphone's: what it captured, the oldest first) */
 int host_sdl_get_audio_stream_data(uint32_t handle, void *data, int length)
 {
-	(void)handle;
-	(void)data;
-	(void)length;
-	return 0;
+	struct audio_stream *stream = stream_of(handle);
+	int taken;
+
+	if (!stream || !stream->recording || length <= 0)
+		return 0;
+	mutexLock(&stream->lock);
+	taken = length < stream->pending_bytes ? length : stream->pending_bytes;
+	taken -= taken % (int)sizeof(float);
+	memcpy(data, stream->pending, (size_t)taken);
+	stream->pending_bytes -= taken;
+	memmove(stream->pending, (char *)stream->pending + taken, (size_t)stream->pending_bytes);
+	mutexUnlock(&stream->lock);
+	return taken;
 }
 
 int host_sdl_get_audio_stream_available(uint32_t handle)
 {
-	(void)handle;
-	return 0;
+	struct audio_stream *stream = stream_of(handle);
+	int available;
+
+	if (!stream || !stream->recording)
+		return 0;
+	mutexLock(&stream->lock);
+	available = stream->pending_bytes;
+	mutexUnlock(&stream->lock);
+	return available;
 }
 
 /* the stream's thread ends and frees it; this does not wait for it, as the
@@ -293,6 +511,12 @@ void host_sdl_destroy_audio_stream(uint32_t handle)
 output stops here, which releases their buffers */
 void host_audio_stop(void)
 {
+	if (audin_ready)
+	{
+		audinStopAudioIn();
+		audinExit();
+		audin_ready = 0;
+	}
 	if (!audout_ready)
 		return;
 	audoutStopAudioOut();
