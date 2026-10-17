@@ -8,19 +8,21 @@ evidence for it are in `halo_ce_switch_port_guide.md`.
 
 ## State
 
-On a Switch (system 23.0.0), the game runs: the menus at 60 frames a
-second, and the campaign is playable with sound, controllers and rumble,
-though below 60 frames a second and with stutters. Not done yet:
+On a Switch (system 23.0.0), the game runs: the campaign, split screen and
+network games (system link and internet play) are playable with sound,
+voice chat, controllers and rumble, at 60 frames a second with V-Sync but
+in the heaviest scenes, without the stutters of shader compiles and
+checkpoints. Each part:
 
 | Part | State |
 | --- | --- |
 | Memory below 4 GB, the image, threads, files, time | Done |
-| Sound | Done (audout); no microphone |
+| Sound | Done (audout); voice chat's microphone is the system's input (audin): a headset's in the headphone jack, or a USB one. Push-to-talk takes only a keyboard key, so on the Switch voice chat is Audio Setup's OPEN MIC |
 | Picture | Done: OpenGL ES 3.2 on switch-mesa (nouveau), on the display's 1280x720 in the hand and, docked, the TV's setting up to 1920x1080 (following docking and undocking). The game's 852x480 is drawn at 480 lines in the hand and 720 docked (two thirds of the display's), scaled up; Video Settings > Resolution (`display.render_height`) chooses 480 to 1080. Drawing the display's own lines makes the GPU the limit: docked at 1080, about 40 frames a second in the campaign against 58 at 480 |
 | Controllers | Done: up to 4 (Joy-Con pairs, the handheld's, Pro Controllers, single Joy-Cons), by Xbox position (B is the Xbox's A), with HD Rumble; no touch screen, keyboard or clipboard |
-| Split screen | Co-op campaign (Multiplayer > CO-OP CAMPAIGN) works with two controllers, paired before OpenCE starts (HOME > Controllers): checked in 343 Guilty Spark at about 35 to 60 frames a second (45 most of the time). Split-screen multiplayer goes through a network game's lobby, which needs the network |
+| Split screen | Co-op campaign (Multiplayer > CO-OP CAMPAIGN) and multiplayer, through a network game's lobby (another controller's START joins it), with up to 4 players: checked with 3. Controllers are paired before OpenCE starts (HOME > Controllers), or with − and + held in the game. Other consoles' controllers, through MissionControl (Bluetooth) or sys-con (USB), are Pro Controllers to the game |
 | Speed | The campaign is playable but below 60 frames a second in heavy scenes, where the game's own code on one core is the limit (Video Settings > Docked CPU Clock and Handheld CPU Clock, `switch.cpu_clock_docked` and `switch.cpu_clock_handheld`, raise the CPU from the system's 1020 MHz to up to 1785 while the game runs, each in its mode and following docking, through the clock service as sys-clk does: `host_clock.c`); Mesa's GL thread, persistently mapped vertex buffers and Mesa's shader cache (`port/switch/mesa`) took the driver's work and repeated shader compiles off the main thread |
-| Network, sockets | None yet: the game's network functions fail as without a network (`host_network.c`) |
+| Network | Done: system link and internet play (joined and hosted, with other builds' players), on the system's sockets (`host_network.c`: `port/linux/src/posix_net.c`, `posix_upnp.c` and `posix_dtls.c`, as Android's host builds them), with the network requested from the system for the session and the network's own broadcast address. Socket buffers are the pool's (the system shares one between all sockets) |
 
 An import the host does not implement yet logs its name in `host.txt` the
 first time the game calls it.
