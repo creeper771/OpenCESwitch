@@ -643,6 +643,23 @@ void game_state_write_to_persistent_storage(
 	HANDLE file;
 	unsigned long checksum;
 	unsigned long bytes_written;
+	/* port: the checksum and the file are of a copy, taken at once: the
+	game's other threads (its sound's) went on changing the state as the 20
+	MB of the native builds' were checksummed and then written, a second or
+	more on a Switch's SD card, and the file did not match its checksum
+	("checksum failed on persistent storage"): the campaign could not be
+	continued. The state's own header gets the checksum, as before. */
+	unsigned long *state_checksum = header_checksum;
+	void *image = (byte *)header_checksum >= (byte *)buffer &&
+		(byte *)header_checksum + sizeof(*header_checksum) <= (byte *)buffer + header_size ?
+		malloc(buffer_size) : NULL;
+
+	if (image)
+	{
+		csmemcpy(image, buffer, buffer_size);
+		header_checksum = (unsigned long *)((byte *)image + ((byte *)header_checksum - (byte *)buffer));
+		buffer = image;
+	}
 
 	file = game_state_open_persistent_storage(NULL);
 	if (file != INVALID_HANDLE_VALUE)
@@ -679,7 +696,10 @@ void game_state_write_to_persistent_storage(
 
 		memcpy(buffer, saved_header, header_size);
 		CloseHandle(file);
+		*state_checksum = *header_checksum;
 	}
+	if (image)
+		free(image);
 
 	return;
 }
