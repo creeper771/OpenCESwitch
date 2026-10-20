@@ -407,6 +407,19 @@ int host_sdl_show_simple_message_box(uint32_t flags, const char *title, const ch
 	return 1;
 }
 
+/* a question for the player (the mods at startup: port/linux/src/port_mods.c):
+the log, and the default button's answer, as there is no dialog yet */
+int host_sdl_show_message_box(uint32_t flags, const char *title, const char *message, int default_index,
+	const char *button0, const char *button1, const char *button2)
+{
+	const char *labels[3] = { button0, button1, button2 };
+
+	(void)flags;
+	host_logf(HOST_LOG_WARN, "question: %s: %s (answered %s)", title ? title : "", message ? message : "",
+		default_index >= 0 && default_index < 3 && labels[default_index] ? labels[default_index] : "none");
+	return default_index;
+}
+
 /* ---------- as the Android host's */
 
 void host_gl_get_string(uint32_t name, int index, char *buffer, uint32_t size)
