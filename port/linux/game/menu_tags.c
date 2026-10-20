@@ -1890,13 +1890,30 @@ static void pause_campaign_grow_box(struct ui_widget_definition *widget, short s
 		widget->bounds.y1 = (short)(widget->bounds.y1 + shift);
 }
 
-static boolean pause_settings_item_hidden(long tag_index)
+/* the settings a Switch has no use for: the keyboard's keys and the mouse
+(Android's build on port/switch's host, which says so: HALO_SWITCH) */
+static char const *const switch_settings_hidden_items[] =
+{
+	"main_menu/settings_select/player_setup/player_profile_edit/controller_setup_profile_item",
+	"main_menu/settings_select/player_setup/player_profile_edit/mouse_settings_profile_item",
+};
+
+static boolean menus_on_switch(void)
+{
+#ifdef HALO_ANDROID
+	return getenv("HALO_SWITCH") != NULL;
+#else
+	return FALSE;
+#endif
+}
+
+static boolean item_named_in(long tag_index, char const *const *names, short count)
 {
 	short index;
 
-	for (index = 0; index < (short)NUMBEROF(pause_settings_hidden_items); index++)
+	for (index = 0; index < count; index++)
 	{
-		long widget = widget_named(pause_settings_hidden_items[index]);
+		long widget = widget_named(names[index]);
 
 		if (widget != NONE && build.widget_tags[widget] == tag_index)
 			return TRUE;
@@ -1904,21 +1921,28 @@ static boolean pause_settings_item_hidden(long tag_index)
 	return FALSE;
 }
 
+/* an item of the settings list not shown: in a game's pause menu, those
+that do not work in a game; on a Switch, the keyboard's and the mouse's */
+static boolean settings_item_hidden(long tag_index, boolean in_game)
+{
+	return (in_game && item_named_in(tag_index, pause_settings_hidden_items,
+			(short)NUMBEROF(pause_settings_hidden_items))) ||
+		(menus_on_switch() && item_named_in(tag_index, switch_settings_hidden_items,
+			(short)NUMBEROF(switch_settings_hidden_items)));
+}
+
 /* the hidden items stay in the list, empty and taking no events (which it
 passes over), as an item's description is the one at its place in the list;
 the others move up into the first places */
-static void pause_settings_patch(void)
+static void settings_list_compact(boolean in_game)
 {
 	long list_widget = widget_named(PAUSE_SETTINGS_LIST);
-	long ok_widget = widget_named(PAUSE_SETTINGS_GAMEPADS_OK);
-	long settings_save = function_index("port settings save", "pause", 0);
-	struct ui_widget_definition *list, *ok;
+	struct ui_widget_definition *list;
 	struct ui_widget_child_reference *children;
-	struct ui_widget_event_handler_reference *handlers;
 	short places[16];
-	long child, handler, place_count = 0, place = 0;
+	long child, place_count = 0, place = 0;
 
-	if (list_widget == NONE || ok_widget == NONE)
+	if (list_widget == NONE)
 		return;
 	list = tag_get(UI_WIDGET_DEFINITION_TAG, build.widget_tags[list_widget]);
 	children = list->child_widgets.address;
@@ -1935,7 +1959,7 @@ static void pause_settings_patch(void)
 
 		if (item->type != _widget_type_text_box)
 			continue;
-		if (pause_settings_item_hidden(children[child].widget_tag.index))
+		if (settings_item_hidden(children[child].widget_tag.index, in_game))
 		{
 			item->event_handlers.count = 0;
 			reference_clear(&item->background_bitmap, BITMAP_GROUP_TAG);
@@ -1949,6 +1973,21 @@ static void pause_settings_patch(void)
 			children[child].vertical_offset = (short)(places[place++] - item->bounds.y0);
 		}
 	}
+}
+
+/* the campaign's pause menu's settings: those that work in a game, and
+Gamepads' OK saving the profile itself */
+static void pause_settings_patch(void)
+{
+	long ok_widget = widget_named(PAUSE_SETTINGS_GAMEPADS_OK);
+	long settings_save = function_index("port settings save", "pause", 0);
+	struct ui_widget_definition *ok;
+	struct ui_widget_event_handler_reference *handlers;
+	long handler;
+
+	if (widget_named(PAUSE_SETTINGS_LIST) == NONE || ok_widget == NONE)
+		return;
+	settings_list_compact(TRUE);
 	ok = tag_get(UI_WIDGET_DEFINITION_TAG, build.widget_tags[ok_widget]);
 	handlers = ok->event_handlers.address;
 	for (handler = 0; handler < ok->event_handlers.count; handler++)
@@ -2165,6 +2204,10 @@ void menu_tags_loaded(
 		instances[DATUM_INDEX_TO_ABSOLUTE_INDEX(build.widget_tags[index])].base_address = widget_build(index);
 	if (build.failed)
 		goto failed;
+	/* (a Switch's settings: the campaign's pause menu's patch hides them with
+	its own) */
+	if (menus_on_switch() && !campaign)
+		settings_list_compact(FALSE);
 	if (game_map)
 	{
 		pause_patch(instances);

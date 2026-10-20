@@ -342,6 +342,10 @@ int host_sdl_gl_swap_window(uint32_t window)
 	int result;
 
 	(void)window;
+	/* (the system asks OpenCE to close: the game is left here, between
+	frames, as a quit from its menus leaves it, and the host shuts down) */
+	if (host_exit_requested)
+		host_guest_exited(0);
 	if (display != EGL_NO_DISPLAY && window_interval != vsync)
 	{
 		window_interval = vsync;

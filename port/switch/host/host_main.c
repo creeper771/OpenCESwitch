@@ -154,6 +154,65 @@ void host_exit(int code)
 	end_process();
 }
 
+/* ---------- the system's messages
+
+The system asks the application to close (HOME's Close, or a power off) only
+if the application has locked its exit (appletLockExit, at the start): else
+it ends the process at once, with nothing logged and the CPU's clock left
+raised. The request is the game's main thread's to take, at its next frame
+(host_exit_requested, host_gl.c), with no lock held, as a quit from the
+game's menus is taken; a game that does not come to its next frame within
+EXIT_WAIT is let go, its clock put back first. Docking, undocking and
+waking set the clock again at once. */
+
+#define EXIT_WAIT_TICKS 50
+
+volatile int host_exit_requested;
+static int exit_wait;
+
+static void system_messages(void)
+{
+	u32 message;
+
+	if (exit_wait && ++exit_wait > EXIT_WAIT_TICKS)
+	{
+		host_logf(HOST_LOG_WARN, "the game did not stop within 5 s: closing as it is");
+		host_clock_restore();
+		mutexLock(&log_lock);
+		if (log_file)
+			fclose(log_file);
+		log_file = NULL;
+		mutexUnlock(&log_lock);
+		appletUnlockExit();
+		exit_wait = 0;
+		return;
+	}
+	if (R_FAILED(eventWait(appletGetMessageEvent(), 0)))
+		return;
+	while (R_SUCCEEDED(appletGetMessage(&message)))
+	{
+		switch (message)
+		{
+		case AppletMessage_ExitRequest:
+			if (!host_exit_requested)
+			{
+				host_logf(HOST_LOG_INFO, "the system asks OpenCE to close (HOME, or a power off)");
+				host_exit_requested = 1;
+				exit_wait = 1;
+			}
+			break;
+		case AppletMessage_OperationModeChanged:
+		case AppletMessage_PerformanceModeChanged:
+		case AppletMessage_Resume:
+			appletProcessMessage(message);
+			host_clock_keep();
+			break;
+		default:
+			break;
+		}
+	}
+}
+
 /* ---------- the heartbeat */
 
 /* Logs what the guest did in the last few seconds, so a log that stops
@@ -171,7 +230,10 @@ static void heartbeat(void *unused)
 		int tick;
 
 		for (tick = 0; tick < HEARTBEAT_SECONDS * 10 && !heartbeat_stop; tick++)
+		{
 			svcSleepThread(100000000LL);
+			system_messages();
+		}
 		if (heartbeat_stop)
 			break;
 		struct host_activity now = host_activity;
@@ -352,6 +414,8 @@ int main(int argc, char **argv)
 	if (type != AppletType_Application && type != AppletType_SystemApplication)
 		host_fatal("Start OpenCE by holding R while starting a game (title takeover). "
 			"From the Album (applet mode) there is too little memory.");
+	/* (HOME's Close asks first, so that the game shuts down: system_messages) */
+	appletLockExit();
 
 	rc = romfsInit();
 	if (R_FAILED(rc))
@@ -444,5 +508,6 @@ int main(int argc, char **argv)
 	main, which would first run atexit's functions: Mesa's waits for its
 	threads, the GL thread among them. */
 	__nx_applet_exit_mode = 1;
+	appletUnlockExit();
 	__libnx_exit(code);
 }

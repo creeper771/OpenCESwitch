@@ -52,7 +52,10 @@ make -C port/switch/host        # build/switch/opence.nro
    memory, and it says so.
 4. Quit it from the game's menus: the host stops the game's threads and
    asks the system to end the application, which returns to the HOME
-   menu after a moment. (Closing it from the HOME menu works too.)
+   menu after a moment. Closing it from the HOME menu shuts it down the
+   same way: the host locks the application's exit, so the system asks
+   first, and the game leaves at its next frame (a game that does not
+   within 5 seconds is let go, its CPU clock put back).
 
 The screen shows the host's log until the game opens its window.
 `sdmc:/switch/opence` then holds `host.txt` (the host's log, with a

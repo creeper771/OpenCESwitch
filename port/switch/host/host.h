@@ -91,6 +91,9 @@ static inline uint64_t host_now(void)
 extern struct host_activity host_activity;
 
 /* host_main.c */
+/* the system has asked OpenCE to close: the game's main thread leaves the
+game at its next frame (host_gl.c) */
+extern volatile int host_exit_requested;
 void host_logf(int level, const char *format, ...) __attribute__((format(printf, 2, 3)));
 void host_fatal(const char *format, ...) __attribute__((noreturn, format(printf, 1, 2)));
 void host_log(int priority, const char *text);
