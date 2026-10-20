@@ -402,22 +402,66 @@ static BOOL decode_level(const struct xgpu_texture_description *description, uns
 			return FALSE;
 		for (x = 0; x < width; x++)
 			x_offsets[x] = spread(masks.x, x);
-		for (z = 0; z < depth; z++)
-		{
-			unsigned long z_offset = spread(masks.z, z);
-
-			for (y = 0; y < height; y++)
-			{
-				unsigned long y_offset = spread(masks.y, y) | z_offset;
-
-				for (x = 0; x < width; x++)
-				{
-					const unsigned char *texel = source + (x_offsets[x] | y_offset) * information.bytes;
-
-					destination[(z * height + y) * width + x] = convert_texel(information.kind, texel, palette, x, texel);
-				}
-			}
+		/* (the commonest formats each with a loop of its own, their texel
+		converted in it: convert_texel chose the format for every texel, much
+		of a frame that met new textures) */
+#define DECODE_SWIZZLED(converted) \
+		for (z = 0; z < depth; z++) \
+		{ \
+			unsigned long z_offset = spread(masks.z, z); \
+			\
+			for (y = 0; y < height; y++) \
+			{ \
+				unsigned long y_offset = spread(masks.y, y) | z_offset; \
+				unsigned long *out = destination + (z * height + y) * width; \
+				\
+				for (x = 0; x < width; x++) \
+				{ \
+					const unsigned char *texel = source + (x_offsets[x] | y_offset) * information.bytes; \
+					\
+					out[x] = (converted); \
+				} \
+			} \
 		}
+		switch (information.kind)
+		{
+		case _texel_a8r8g8b8:
+			DECODE_SWIZZLED(TEXEL32(texel));
+			break;
+		case _texel_x8r8g8b8:
+			DECODE_SWIZZLED(TEXEL32(texel) | 0xff000000UL);
+			break;
+		case _texel_r5g6b5:
+			DECODE_SWIZZLED(argb(255, expand5(TEXEL16(texel) >> 11), expand6((TEXEL16(texel) >> 5) & 0x3f),
+				expand5(TEXEL16(texel) & 0x1f)));
+			break;
+		case _texel_a1r5g5b5:
+			DECODE_SWIZZLED(argb((TEXEL16(texel) & 0x8000) ? 255 : 0, expand5((TEXEL16(texel) >> 10) & 0x1f),
+				expand5((TEXEL16(texel) >> 5) & 0x1f), expand5(TEXEL16(texel) & 0x1f)));
+			break;
+		case _texel_a4r4g4b4:
+			DECODE_SWIZZLED(argb(expand4(TEXEL16(texel) >> 12), expand4((TEXEL16(texel) >> 8) & 0xf),
+				expand4((TEXEL16(texel) >> 4) & 0xf), expand4(TEXEL16(texel) & 0xf)));
+			break;
+		case _texel_p8:
+			if (palette)
+			{
+				DECODE_SWIZZLED(palette[texel[0]]);
+				break;
+			}
+			DECODE_SWIZZLED(convert_texel(information.kind, texel, palette, x, texel));
+			break;
+		case _texel_a8:
+			DECODE_SWIZZLED(argb(texel[0], 255, 255, 255));
+			break;
+		case _texel_a8l8:
+			DECODE_SWIZZLED(argb(texel[1], texel[0], texel[0], texel[0]));
+			break;
+		default:
+			DECODE_SWIZZLED(convert_texel(information.kind, texel, palette, x, texel));
+			break;
+		}
+#undef DECODE_SWIZZLED
 		free(x_offsets);
 	}
 	return TRUE;

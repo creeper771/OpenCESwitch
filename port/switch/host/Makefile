@@ -39,7 +39,7 @@ MBEDTLS := $(ROOT)/port/third_party/mbedtls
 MINIUPNPC_SOURCES := $(notdir $(wildcard $(MINIUPNPC)/src/*.c))
 MBEDTLS_SOURCES := $(notdir $(wildcard $(MBEDTLS)/library/*.c))
 
-SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c host_gl.c host_profile.c host_network.c host_input.c host_clock.c \
+SOURCES := host_main.c host_memory.c host_loader.c host_thread.c host_syscall.c host_imports.c host_audio.c host_gl.c host_profile.c host_network.c host_input.c host_clock.c host_file_memory.c \
 	host_watch_hash.c posix_files.c posix_net.c posix_upnp.c posix_dtls.c \
 	$(MINIUPNPC_SOURCES) $(MBEDTLS_SOURCES)
 ASSEMBLY := host_stack.s host_stubs.s

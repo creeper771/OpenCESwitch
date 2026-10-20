@@ -369,13 +369,15 @@ struct guest_file
 	int has_pending;
 	struct dirent pending;
 	int64_t position;
+	/* a cache file's memory (host_file_memory.c), or NULL */
+	struct file_memory *memory;
 };
 
 static struct guest_file files[MAXIMUM_FILES] =
 {
-	{FILE_STREAM, 0, NULL, NULL, 0, 0, {0}, 0},
-	{FILE_STREAM, 1, NULL, NULL, 1, 0, {0}, 0},
-	{FILE_STREAM, 2, NULL, NULL, 1, 0, {0}, 0},
+	{FILE_STREAM, 0, NULL, NULL, 0, 0, {0}, 0, NULL},
+	{FILE_STREAM, 1, NULL, NULL, 1, 0, {0}, 0, NULL},
+	{FILE_STREAM, 2, NULL, NULL, 1, 0, {0}, 0, NULL},
 };
 static Mutex files_lock;
 
@@ -503,6 +505,7 @@ static long guest_openat(long long dirfd, uint64_t address, int flags, int mode)
 			return -error;
 		}
 		files[fd].kind = FILE_FILE;
+		files[fd].memory = host_file_memory_open(path, files[fd].fd);
 	}
 	files[fd].path = path;
 	files[fd].flags = flags;
@@ -525,7 +528,10 @@ static long guest_close(long long fd)
 		return file ? 0 : -LINUX_EBADF;
 	}
 	if (file->kind == FILE_FILE)
+	{
+		host_file_memory_close(file->memory);
 		result = result_of(close(file->fd));
+	}
 	else
 		closedir(file->directory);
 	free(file->path);
@@ -546,8 +552,20 @@ static long guest_read(long long fd, void *buffer, size_t size)
 		return -LINUX_EISDIR;
 	{
 		uint64_t start = host_now();
-		long result = result_of(read(file->fd, buffer, size));
+		long result;
 
+		/* (in memory: copied, and the position moved past it) */
+		if (file->memory)
+		{
+			off_t position = lseek(file->fd, 0, SEEK_CUR);
+
+			if (position >= 0 && host_file_memory_read(file->memory, buffer, size, (uint64_t)position) == size)
+			{
+				lseek(file->fd, position + (off_t)size, SEEK_SET);
+				return (long)size;
+			}
+		}
+		result = result_of(read(file->fd, buffer, size));
 		HOST_ADD(read_time, host_now() - start);
 		if (result > 0)
 			HOST_ADD(read_bytes, (uint64_t)result);
@@ -570,7 +588,14 @@ static long guest_write(long long fd, const void *buffer, size_t size)
 	}
 	if (file->kind == FILE_DIRECTORY)
 		return -LINUX_EISDIR;
-	return result_of(write(file->fd, buffer, size));
+	{
+		off_t position = file->memory ? lseek(file->fd, 0, SEEK_CUR) : 0;
+		long result = result_of(write(file->fd, buffer, size));
+
+		if (file->memory && result > 0 && position >= 0)
+			host_file_memory_wrote(file->memory, buffer, (size_t)result, (uint64_t)position);
+		return result;
+	}
 }
 
 static long guest_seek(long long fd, int64_t offset, int whence)
@@ -608,7 +633,15 @@ static long guest_positional(long long fd, void *buffer, size_t size, int64_t of
 	{
 		uint64_t start = host_now();
 
+		if (!writing && file->memory &&
+			host_file_memory_read(file->memory, buffer, size, (uint64_t)offset) == size)
+		{
+			lseek(file->fd, position, SEEK_SET);
+			return (long)size;
+		}
 		result = writing ? result_of(write(file->fd, buffer, size)) : result_of(read(file->fd, buffer, size));
+		if (writing && file->memory && result > 0)
+			host_file_memory_wrote(file->memory, buffer, (size_t)result, (uint64_t)offset);
 		if (!writing)
 		{
 			HOST_ADD(read_time, host_now() - start);
@@ -756,6 +789,13 @@ static long guest_getdents(long long fd, uint64_t address, uint32_t size)
 	return used;
 }
 
+/* (a file deleted: the memory of it too, host_file_memory.c) */
+static int unlink_forgetting(const char *path)
+{
+	host_file_memory_forget(path);
+	return unlink(path);
+}
+
 static long path_call(long long dirfd, uint64_t address, int (*call)(const char *))
 {
 	int error = LINUX_ENOMEM;
@@ -793,6 +833,8 @@ static long guest_renameat(long long old_dirfd, uint64_t old_address, long long 
 		free(old_path);
 		return -error;
 	}
+	host_file_memory_forget(old_path);
+	host_file_memory_forget(new_path);
 	/* Linux replaces an existing file; the SD card's file system does not */
 	if (rename(old_path, new_path) == 0)
 		result = 0;
@@ -827,6 +869,7 @@ void host_files_close(void)
 {
 	int fd;
 
+	host_file_memory_stop();
 	mutexLock(&files_lock);
 	for (fd = 3; fd < MAXIMUM_FILES; fd++)
 	{
@@ -950,7 +993,7 @@ long long host_syscall(long long number, long long a, long long b, long long c,
 	case __NR_mkdirat:
 		return path_call(a, (uint64_t)b, make_directory);
 	case __NR_unlinkat:
-		return path_call(a, (uint64_t)b, ((int)c & LINUX_AT_REMOVEDIR) ? rmdir : unlink);
+		return path_call(a, (uint64_t)b, ((int)c & LINUX_AT_REMOVEDIR) ? rmdir : unlink_forgetting);
 	case __NR_renameat:
 	case __NR_renameat2:
 		return guest_renameat(a, (uint64_t)b, c, (uint64_t)d);
@@ -974,6 +1017,12 @@ long long host_syscall(long long number, long long a, long long b, long long c,
 
 		if (!file || file->kind != FILE_FILE)
 			return file ? -LINUX_EINVAL : -LINUX_EBADF;
+		if (file->memory)
+		{
+			host_file_memory_forget(file->path);
+			host_file_memory_close(file->memory);
+			file->memory = NULL;
+		}
 		return result_of(ftruncate(file->fd, (off_t)b));
 	}
 	case __NR_fsync:

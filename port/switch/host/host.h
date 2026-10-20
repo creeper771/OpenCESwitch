@@ -226,6 +226,16 @@ void host_profile_report(void);
 void host_profile_syscall(long long number);
 void host_profile_frame(uint64_t start, uint64_t end);
 
+/* host_file_memory.c: the level being played (save/z's cache files), kept in
+memory */
+struct file_memory;
+struct file_memory *host_file_memory_open(const char *path, int fd);
+void host_file_memory_close(struct file_memory *memory);
+size_t host_file_memory_read(struct file_memory *memory, void *buffer, size_t size, uint64_t offset);
+void host_file_memory_wrote(struct file_memory *memory, const void *buffer, size_t size, uint64_t offset);
+void host_file_memory_forget(const char *path);
+void host_file_memory_stop(void);
+
 /* host_imports.c */
 void *host_resolve_import(const char *name, uint32_t index);
 uint32_t host_missing_import_count(void);
