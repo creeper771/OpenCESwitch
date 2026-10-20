@@ -104,17 +104,11 @@ void crc_checksum_buffer(
 	}
 
 	crc = *crc_reference;
-	if (buffer_size > 0)
-	{
-		do
-		{
-			table_index = (*(byte const *)buffer ^ crc) & 0xFF;
-			table_index = crc_globals.table[table_index];
-			crc >>= 8;
-			buffer = (byte const *)buffer + 1;
-			crc ^= table_index;
-		} while (--buffer_size);
-	}
+	/* port: the same value, through the port's zlib (port/linux/src/halo_crc32.c),
+	which takes several bytes a step: a byte at a time, the native builds'
+	20 MB saved game took a moment the menus stopped for */
+	crc = halo_crc32_update(crc, buffer, buffer_size);
+	(void)table_index;
 
 	*crc_reference = crc;
 	return;

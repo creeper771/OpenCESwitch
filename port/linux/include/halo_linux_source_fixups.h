@@ -59,6 +59,10 @@ struct scenario_object_datum;
 unsigned char custom_edition_vehicles_by_placement(void);
 unsigned char custom_edition_vehicle_placement_allowed(struct scenario_object_datum const *placement);
 
+/* the game's CRC-32 of buffer, continued from crc (source/memory/crc.c),
+through the port's zlib (port/linux/src/halo_crc32.c) */
+unsigned long halo_crc32_update(unsigned long crc, const void *buffer, long size);
+
 /* the width of the screen the game draws, 480 lines tall: the device's or
 the display's shape, or 640 (port/linux/src/d3d8_gl.c) */
 long halo_screen_width(void);

@@ -145,10 +145,57 @@ static void game_state_header_terminate(
 	long header_size);
 static HANDLE game_state_open_persistent_storage(
 	const char *directory);
+static __inline boolean game_state_get_persistent_storage_path(
+	char *path);
 
 /* ---------- globals */
 
 static struct xbox_game_state_globals_prefix xbox_game_state_globals = { 0 };
+
+/* port: the last header read from persistent storage, and what was found:
+the menus read it again each time a campaign screen opens, the whole 20 MB
+of the native builds' state and its checksum, which stopped them for a
+moment on a Switch. Only this process writes the file, so the answer holds
+until it writes, deletes or makes it again; one for each profile's file
+(the saved games screen asks of each), the oldest given up for a new one */
+#define PERSISTENT_HEADERS_KNOWN 8
+
+static struct persistent_header_known
+{
+	boolean valid;
+	char path[256];
+	byte header[2048];
+	long header_size;
+	long buffer_size;
+	boolean result;
+	boolean corrupted;
+} persistent_headers_known[PERSISTENT_HEADERS_KNOWN];
+static long persistent_header_next;
+
+/* port: the answer kept for path, or NULL */
+static struct persistent_header_known *persistent_header_known_of(
+	const char *path)
+{
+	long index;
+
+	for (index = 0; index < PERSISTENT_HEADERS_KNOWN; index++)
+	{
+		if (persistent_headers_known[index].valid && !strcmp(persistent_headers_known[index].path, path))
+			return &persistent_headers_known[index];
+	}
+	return NULL;
+}
+
+/* port: the current profile's file is about to change */
+static void persistent_header_forget(
+	void)
+{
+	char path[256];
+	struct persistent_header_known *known;
+
+	if (game_state_get_persistent_storage_path(path) && (known = persistent_header_known_of(path)) != NULL)
+		known->valid = FALSE;
+}
 
 /* ---------- public code */
 
@@ -475,6 +522,8 @@ static void delete_persistent_storage(
 {
 	char path[256];
 
+	/* port: (what was read of it is no longer the file's) */
+	persistent_header_forget();
 	if (game_state_get_persistent_storage_path(path))
 		DeleteFileA(path);
 
@@ -509,6 +558,8 @@ static HANDLE game_state_open_persistent_storage(
 			success = TRUE;
 			if (GetFileSize(file, NULL) != GAME_STATE_FILE_SIZE)
 			{
+				/* port: (made again) */
+				persistent_header_forget();
 				memset(zeroes, 0, sizeof(zeroes));
 				if (!WriteFile(file, zeroes, sizeof(zeroes), &bytes_written, NULL) ||
 					bytes_written != sizeof(zeroes) ||
@@ -572,6 +623,19 @@ boolean game_state_read_header_from_persistent_storage(
 	long remaining_size;
 	long read_size;
 	boolean result;
+	/* port: (persistent_headers_known) */
+	char known_path[256];
+	boolean path_known = header_size <= (long)sizeof(persistent_headers_known[0].header) &&
+		game_state_get_persistent_storage_path(known_path);
+	struct persistent_header_known *known = path_known ? persistent_header_known_of(known_path) : NULL;
+
+	if (known && known->header_size == header_size && known->buffer_size == buffer_size)
+	{
+		memcpy(header, known->header, header_size);
+		if (corrupted)
+			*corrupted = known->corrupted;
+		return known->result;
+	}
 
 	file = game_state_open_persistent_storage(NULL);
 	result = FALSE;
@@ -630,6 +694,19 @@ boolean game_state_read_header_from_persistent_storage(
 		CloseHandle(file);
 	}
 
+	if (path_known)
+	{
+		if (!known)
+			known = &persistent_headers_known[persistent_header_next++ % PERSISTENT_HEADERS_KNOWN];
+		known->valid = TRUE;
+		strcpy(known->path, known_path);
+		memcpy(known->header, header, header_size);
+		known->header_size = header_size;
+		known->buffer_size = buffer_size;
+		known->result = result;
+		known->corrupted = corrupted ? *corrupted : FALSE;
+	}
+
 	return result;
 }
 
@@ -650,6 +727,8 @@ void game_state_write_to_persistent_storage(
 	("checksum failed on persistent storage"): the campaign could not be
 	continued. The state's own header gets the checksum, as before. */
 	unsigned long *state_checksum = header_checksum;
+	/* port: (persistent_headers_known: the file is about to change) */
+	persistent_header_forget();
 	void *image = (byte *)header_checksum >= (byte *)buffer &&
 		(byte *)header_checksum + sizeof(*header_checksum) <= (byte *)buffer + header_size ?
 		malloc(buffer_size) : NULL;
