@@ -21,7 +21,7 @@ Nothing of Mesa is kept in the repository: the script downloads Mesa
 commit `c7876f72c1f3353725ab8468f0ef9180280a8c31`), checks the SHA-256 sums
 the recipe gives, applies the recipe's patches and then these, and builds
 into `build/switch/mesa`. Mesa is under the MIT licence; these patches are
-CC0, as the repository is.
+under the repository's, AGPL-3.0-or-later (`LICENSE`).
 
 ## Build
 

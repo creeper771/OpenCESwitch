@@ -1,6 +1,6 @@
 # Memory probe
 
-Phase 1.1 of `halo_ce_switch_port_guide.md`: finds out whether a homebrew
+The port's first test: finds out whether a homebrew
 process on the Switch can have the memory the OpenCE guest needs, the fixed
 range `0x80000000`–`0x8c000000` read/write and more address space below
 4 GB (`port/android/include/halo_android_abi.h`).

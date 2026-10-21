@@ -3,8 +3,7 @@
 A native homebrew build for a Switch running Atmosphère: an NRO that runs
 the Android port's game image (the game compiled for ILP32 AArch64,
 `build/android/halo_guest.elf`) on Horizon. `port/switch/host` is the
-Switch's host, as `port/android/host` is Android's; the plan and the
-evidence for it are in `halo_ce_switch_port_guide.md`.
+Switch's host, as `port/android/host` is Android's.
 
 ## State
 
