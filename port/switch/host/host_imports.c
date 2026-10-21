@@ -89,6 +89,7 @@ static const struct host_import implemented[] =
 	{"host_exit", (void *)host_exit},
 	{"host_errno", (void *)host_errno},
 	{"host_cpu_clock", (void *)host_cpu_clock},
+	{"host_gpu_clock", (void *)host_gpu_clock},
 	{"host_get_tp", (void *)host_get_tp},
 	{"host_set_tp", (void *)host_set_tp},
 	{"host_thread_create", (void *)host_thread_create},

@@ -245,3 +245,10 @@ unsigned int host_cpu_clock(unsigned int docked_megahertz, unsigned int handheld
 	(void)handheld_megahertz;
 	return 0;
 }
+
+unsigned int host_gpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz)
+{
+	(void)docked_megahertz;
+	(void)handheld_megahertz;
+	return 0;
+}

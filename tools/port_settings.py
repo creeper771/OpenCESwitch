@@ -34,6 +34,10 @@ SHIELD_COLORS = ["white", "black", "red", "blue", "gray", "yellow", "green", "pi
 SENSITIVITIES = [(f"{value:g}", f"{value:g}") for value in (0.1, 0.15, 0.25, 0.4, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4)]
 # the Switch's CPU clocks (port/switch/host/host_clock.c)
 CPU_CLOCKS = [("STOCK", "0"), ("1224 MHZ", "1224"), ("1428 MHZ", "1428"), ("1581 MHZ", "1581"), ("1785 MHZ", "1785")]
+# and its GPU's (the module's own table: 844.8, 921.6 MHz and so on)
+GPU_CLOCKS_DOCKED = [("STOCK", "0"), ("844 MHZ", "844"), ("921 MHZ", "921")]
+GPU_CLOCKS_HANDHELD = [("STOCK", "0"), ("460 MHZ", "460"), ("537 MHZ", "537"), ("614 MHZ", "614"), ("691 MHZ", "691"),
+                       ("768 MHZ", "768")]
 VOLUMES = [(str(step), f"{step / 10:g}") for step in range(11)]
 
 # each screen: its folder below PE, its screen's widget (the name the profile
@@ -88,6 +92,10 @@ SCREENS = {
              "The CPU's speed docked: faster keeps heavy\nscenes smoother, with more heat.", "switch"),
             ("HANDHELD CPU CLOCK:", "switch.cpu_clock_handheld", CPU_CLOCKS,
              "The CPU's speed in the hand: faster keeps heavy\nscenes smoother, for less battery.", "switch"),
+            ("DOCKED GPU CLOCK:", "switch.gpu_clock_docked", GPU_CLOCKS_DOCKED,
+             "The GPU's speed docked: faster keeps higher\nresolutions smoother, with more heat.", "switch"),
+            ("HANDHELD GPU CLOCK:", "switch.gpu_clock_handheld", GPU_CLOCKS_HANDHELD,
+             "The GPU's speed in the hand: faster keeps higher\nresolutions smoother, for less battery.", "switch"),
             ("INSTANT AIM:", "display.direct_camera", ON_OFF,
              "In first person, turn the view the moment the\nmouse moves, not up to two ticks later.", "desktop web"),
             ("HIGH-RES HUD:", "display.high_res_hud", ON_OFF,

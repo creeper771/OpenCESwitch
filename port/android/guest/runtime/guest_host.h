@@ -157,5 +157,7 @@ switch.cpu_clock_handheld), 0 for the system's own; the clock set now
 (MHz), or 0 where the host cannot set it (Android: a phone's clock is the
 system's) */
 unsigned int host_cpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
+/* the GPU's, as the CPU's (switch.gpu_clock_docked, switch.gpu_clock_handheld) */
+unsigned int host_gpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
 
 #endif

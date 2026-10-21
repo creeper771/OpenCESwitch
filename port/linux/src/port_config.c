@@ -644,6 +644,16 @@ static const struct config_setting config_settings[] =
 		_platform_android,
 		"On a Nintendo Switch, in the hand, the CPU's clock in MHz: as\n"
 		"switch.cpu_clock_docked's, with less battery as well as more heat." },
+	{ "switch.gpu_clock_docked", _config_integer, "0", "HALO_GPU_CLOCK_DOCKED", _environment_value,
+		_platform_android,
+		"On a Nintendo Switch, docked, the GPU's clock in MHz: 0 for the system's\n"
+		"own (768), or 844 or 921, for the higher resolutions' frames, with more\n"
+		"heat. A phone ignores it." },
+	{ "switch.gpu_clock_handheld", _config_integer, "0", "HALO_GPU_CLOCK_HANDHELD", _environment_value,
+		_platform_android,
+		"On a Nintendo Switch, in the hand, the GPU's clock in MHz: 0 for the\n"
+		"system's own (307 to 460), or 460, 537, 614, 691 or 768, with less\n"
+		"battery as well as more heat." },
 
 	{ "debug.network_test", _config_string, "\"\"", "HALO_NETWORK_TEST", _environment_value, _platform_all,
 		"Automated system link sessions for testing (port/linux/game/network_test.c):\n"

@@ -230,6 +230,8 @@ These settings are only for Android:
 | `display.render_height` | The lines the picture is drawn at, from `480` to `2160` and at most the display's (Video Settings > Resolution). `0` (the default): 480 on a phone; on a Switch (`port/switch`), two thirds of the display's lines, 480 in the hand and 720 docked. More lines are sharper and ask more of the GPU. |
 | `switch.cpu_clock_docked` | On a Switch (`port/switch`; Video Settings > Docked CPU Clock there), the CPU's clock in MHz while the game runs docked: `0` (the default) for the system's own, 1020 MHz, or `1224`, `1428`, `1581` or `1785`, which keep heavy scenes smoother with more heat. A phone ignores it. |
 | `switch.cpu_clock_handheld` | The same in the hand (Video Settings > Handheld CPU Clock), where a faster clock also takes more of the battery. The clock follows the console as it is docked and undocked. |
+| `switch.gpu_clock_docked` | On a Switch (Video Settings > Docked GPU Clock there), the GPU's clock in MHz docked: `0` (the default) for the system's own, 768 MHz, or `844` or `921`, for the higher resolutions' frames, with more heat. The nearest clock of the GPU's own table at or below it is set. A phone ignores it. |
+| `switch.gpu_clock_handheld` | The same in the hand (Video Settings > Handheld GPU Clock): `0` for the system's own (307 to 460 MHz), or `460`, `537`, `614`, `691` or `768`, with less battery as well as more heat. |
 | `debug.sample_seconds` | Refer to "Find problems". |
 | `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Refer to "Limits". |
 

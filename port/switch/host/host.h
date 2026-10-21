@@ -219,6 +219,7 @@ void host_profile_stop(void);
 /* host_clock.c: the CPU's clock (switch.cpu_clock_docked and
 switch.cpu_clock_handheld) */
 unsigned int host_cpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
+unsigned int host_gpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
 void host_clock_keep(void);
 void host_clock_restore(void);
 

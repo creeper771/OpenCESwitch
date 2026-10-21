@@ -1007,25 +1007,36 @@ BOOL platform_video_hdr(float *sdr_white, float *headroom)
 #ifdef HALO_ANDROID
 /* port/android/guest/runtime/guest_host.h */
 unsigned int host_cpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
+unsigned int host_gpu_clock(unsigned int docked_megahertz, unsigned int handheld_megahertz);
 
-/* switch.cpu_clock_docked and switch.cpu_clock_handheld, to the host when
-either has changed (a phone's host sets none) */
-static void platform_cpu_clock_apply(void)
+/* a clock's settings, docked and in the hand, to the host when either has
+changed: applied[2] the last given */
+static void platform_clock_apply(const char *docked_setting, const char *handheld_setting, long applied[2],
+	unsigned int (*host_clock)(unsigned int, unsigned int))
 {
-	static long applied_docked = -1, applied_handheld = -1;
-	long docked = config_integer("switch.cpu_clock_docked");
-	long handheld = config_integer("switch.cpu_clock_handheld");
+	long docked = config_integer(docked_setting);
+	long handheld = config_integer(handheld_setting);
 
 	if (docked < 0)
 		docked = 0;
 	if (handheld < 0)
 		handheld = 0;
-	if (docked != applied_docked || handheld != applied_handheld)
+	if (docked != applied[0] || handheld != applied[1])
 	{
-		applied_docked = docked;
-		applied_handheld = handheld;
-		host_cpu_clock((unsigned int)docked, (unsigned int)handheld);
+		applied[0] = docked;
+		applied[1] = handheld;
+		host_clock((unsigned int)docked, (unsigned int)handheld);
 	}
+}
+
+/* switch.cpu_clock_* and switch.gpu_clock_*, to the host (a phone's host
+sets none) */
+static void platform_cpu_clock_apply(void)
+{
+	static long cpu_applied[2] = { -1, -1 }, gpu_applied[2] = { -1, -1 };
+
+	platform_clock_apply("switch.cpu_clock_docked", "switch.cpu_clock_handheld", cpu_applied, host_cpu_clock);
+	platform_clock_apply("switch.gpu_clock_docked", "switch.gpu_clock_handheld", gpu_applied, host_gpu_clock);
 }
 #endif
 
