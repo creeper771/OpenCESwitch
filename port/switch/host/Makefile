@@ -54,10 +54,16 @@ $(OUT)/obj/posix_net.o: CFLAGS += -I$(ROOT)/port/linux/src
 MINIUPNPC_FLAGS := -I$(MINIUPNPC)/include -I$(MINIUPNPC)/src -DMINIUPNP_STATICLIB -DMINIUPNPC_SET_SOCKET_TIMEOUT \
 	-DMINIUPNPC_GET_SRC_ADDR -D_BSD_SOURCE -D_DEFAULT_SOURCE -Icompat -include compat/miniupnpc_switch.h
 MBEDTLS_FLAGS := -I$(MBEDTLS)/include -I$(MBEDTLS)/library -DMBEDTLS_USER_CONFIG_FILE='"compat/mbedtls_switch_config.h"' 
-$(OUT)/obj/posix_upnp.o: CFLAGS += -I$(ROOT)/port/linux/src $(MINIUPNPC_FLAGS)
-$(addprefix $(OUT)/obj/,$(MINIUPNPC_SOURCES:.c=.o)): CFLAGS += $(MINIUPNPC_FLAGS) -w
-$(OUT)/obj/posix_dtls.o: CFLAGS += -I$(ROOT)/port/linux/src $(MBEDTLS_FLAGS)
-$(addprefix $(OUT)/obj/,$(MBEDTLS_SOURCES:.c=.o)): CFLAGS += $(MBEDTLS_FLAGS) -w
+# (their headers before the portlibs', where devkitPro's own, older
+# switch-mbedtls may be)
+$(OUT)/obj/posix_upnp.o: FIRST_FLAGS := $(MINIUPNPC_FLAGS)
+$(OUT)/obj/posix_upnp.o: CFLAGS += -I$(ROOT)/port/linux/src
+$(addprefix $(OUT)/obj/,$(MINIUPNPC_SOURCES:.c=.o)): FIRST_FLAGS := $(MINIUPNPC_FLAGS)
+$(addprefix $(OUT)/obj/,$(MINIUPNPC_SOURCES:.c=.o)): CFLAGS += -w
+$(OUT)/obj/posix_dtls.o: FIRST_FLAGS := $(MBEDTLS_FLAGS)
+$(OUT)/obj/posix_dtls.o: CFLAGS += -I$(ROOT)/port/linux/src
+$(addprefix $(OUT)/obj/,$(MBEDTLS_SOURCES:.c=.o)): FIRST_FLAGS := $(MBEDTLS_FLAGS)
+$(addprefix $(OUT)/obj/,$(MBEDTLS_SOURCES:.c=.o)): CFLAGS += -w
 
 .PHONY: all clean
 
@@ -67,7 +73,7 @@ $(OUT)/obj $(OUT)/romfs:
 	mkdir -p $@
 
 $(OUT)/obj/%.o: %.c host.h host_posix.h | $(OUT)/obj
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(FIRST_FLAGS) $(CFLAGS) -c $< -o $@
 
 $(OUT)/obj/%.o: %.s | $(OUT)/obj
 	$(CC) $(ARCH) -c $< -o $@

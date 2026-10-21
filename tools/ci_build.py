@@ -6,6 +6,7 @@
     python tools/ci_build.py android release
     python tools/ci_build.py linux profile
     python tools/ci_build.py web release
+    python tools/ci_build.py switch release
 
 Builds are portable (any x86-64 processor), so they run on other
 computers. Debug builds skip link-time and profile-guided optimisation,
@@ -21,6 +22,13 @@ The web build (port/web/README.md) needs Emscripten (emcc on the PATH, as
 emsdk_env.sh puts it); dist/halo-web-<config>/ is the whole site, which a
 static host serves as it is: the workflow publishes the release build's to
 GitHub Pages.
+
+The Switch build (port/switch/README.md) is the Android port's guest image
+(which needs the Android NDK, as the Android build does) in an NRO, whose
+host and Mesa (port/switch/mesa) devkitPro builds: with CI_SWITCH_IMAGE (a
+devkitPro image, devkitpro/devkita64) in a container of it, else with the
+devkitPro DEVKITPRO names. Mesa is built only when build/switch/mesa/install
+does not have it already, as the workflow's cache keeps it.
 """
 
 import argparse
@@ -40,6 +48,7 @@ OUTPUTS = {
     "windows": ["build/windows/halo.exe", "build/windows/SDL3.dll"],
     "android": [],  # the APK, below
     "web": [],  # the site, below
+    "switch": ["build/switch/opence.nro"],
 }
 APKS = {
     "debug": "port/android/app/build/outputs/apk/debug/app-debug.apk",
@@ -50,6 +59,34 @@ APKS = {
 def run(command, cwd=ROOT):
     print("+", " ".join(str(part) for part in command), flush=True)
     subprocess.run([str(part) for part in command], cwd=cwd, check=True)
+
+
+# the Switch host's build, in a container or with the DEVKITPRO there is:
+# Mesa if it is not built yet, then the NRO, and zlib's licence from
+# devkitPro's package
+SWITCH_HOST_BUILD = """
+set -eu
+if [ ! -f build/switch/mesa/install/mesa-license.html ]; then
+    bash port/switch/mesa/build_mesa.sh
+fi
+make -C port/switch/host
+cp "$DEVKITPRO/portlibs/switch/licenses/switch-zlib/LICENSE" build/switch/zlib-LICENSE.txt
+"""
+
+
+def build_switch_host() -> None:
+    image = os.environ.get("CI_SWITCH_IMAGE")
+    if not image:
+        if not os.environ.get("DEVKITPRO"):
+            raise SystemExit("the Switch build needs devkitPro: set DEVKITPRO, or CI_SWITCH_IMAGE")
+        run(["bash", "-c", SWITCH_HOST_BUILD])
+        return
+    # (Mesa's build tools, which the image does not have; then the files the
+    # container made given back to the user who runs it)
+    script = ("apt-get update -q && apt-get install -y -q --no-install-recommends meson bison flex python3-mako"
+              " >/dev/null && " + f"bash -c '{SWITCH_HOST_BUILD}'; status=$?; "
+              f"chown -R {os.getuid()}:{os.getgid()} build/switch; exit $status")
+    run(["docker", "run", "--rm", "-v", f"{ROOT}:/work", "-w", "/work", image, "bash", "-c", script])
 
 
 def main() -> int:
@@ -85,7 +122,12 @@ def main() -> int:
         shutil.copytree(ROOT / "build/web/site", dist)
         print(f"build/web/site -> {dist.relative_to(ROOT)}", flush=True)
         return 0
-    if args.platform == "android":
+    if args.platform == "switch":
+        # (the guest image alone: the Android host and app are not needed)
+        run(["ninja", "build/android/halo_guest.elf"])
+        build_switch_host()
+        outputs = OUTPUTS["switch"]
+    elif args.platform == "android":
         # the native part, then the app around it (Gradle's variant of the
         # same name: release is signed with the debug key, not debuggable)
         run(["ninja", "android"])
@@ -140,9 +182,17 @@ def main() -> int:
     # license asks copies to carry its notice
     shutil.copy2(ROOT / "port/assets/icons/lucide/LICENSE", dist / "lucide-LICENSE.txt")
     # internet play's MQTT brokers, a file beside the game (network.brokers_file;
-    # Android's APK has its own copy)
-    if args.platform != "android":
+    # Android's APK and the Switch's NRO have their own copies)
+    if args.platform not in ("android", "switch"):
         shutil.copy2(ROOT / "port/assets/network/brokers.txt", dist / "brokers.txt")
+    if args.platform == "switch":
+        # what the NRO links that the other builds do not (port/switch/licenses),
+        # and the guest's C library, musl, whose MIT license asks the same
+        for notice in sorted((ROOT / "port/switch/licenses").glob("*-LICENSE*")):
+            shutil.copy2(notice, dist / notice.name)
+        shutil.copy2(ROOT / "build/switch/mesa/install/mesa-license.html", dist / "mesa-license.html")
+        shutil.copy2(ROOT / "build/switch/zlib-LICENSE.txt", dist / "zlib-LICENSE.txt")
+        shutil.copy2(next((ROOT / "build/android/third_party").glob("musl-*/COPYRIGHT")), dist / "musl-COPYRIGHT.txt")
     return 0
 
 

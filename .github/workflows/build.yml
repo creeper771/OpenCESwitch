@@ -1,7 +1,8 @@
 name: Build
 
 # Debug and release builds of the native ports (Linux, Windows, Android) and
-# the web port for every pushed commit, uploaded as artifacts.
+# the web port, and a release build of the Switch's, for every pushed commit,
+# uploaded as artifacts.
 # tools/ci_build.py does each build; see it for the options.
 #
 # Kept cheap:
@@ -345,13 +346,70 @@ jobs:
           include-hidden-files: true
           retention-days: 3
 
+  switch:
+    # The Switch's NRO (port/switch/README.md): the Android port's guest
+    # image, built here with the runner's NDK and clang as the Android job
+    # builds it, and the host and its Mesa (port/switch/mesa), built in
+    # devkitPro's image (pinned by digest) by tools/ci_build.py. Mesa takes
+    # about 15 minutes, so it is cached until its patches, its script or the
+    # image change. Release only: the debug build is the same host.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CI_SWITCH_IMAGE: devkitpro/devkita64@sha256:1fc388c3a0d34bd2045a6dadcb1020e069d5f876a187fd705de14b4440c00282
+    steps:
+      - name: Install the toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          # (each download checked against the hash it had when it was pinned)
+          curl -fsSL -o ninja.zip https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-linux.zip
+          curl -fsSL -o ccache.tar.xz https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz
+          sha256sum -c - <<'EOF'
+          6f98805688d19672bd699fbbfa2c2cf0fc054ac3df1f0e6a47664d963d530255  ninja.zip
+          80cab87bd510eca796467aee8e663c398239e0df1c4800a0b5dff11dca0b4f18  ccache.tar.xz
+          EOF
+          unzip -q ninja.zip -d "$RUNNER_TEMP/tools" && rm ninja.zip
+          tar -xJf ccache.tar.xz -C "$RUNNER_TEMP/tools" --strip-components=1 ccache-4.10.2-linux-x86_64/ccache && rm ccache.tar.xz
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-switch-${{ github.sha }}
+          restore-keys: ccache-switch-
+
+      # musl and SDL, which configure.py fetches
+      - uses: actions/cache@v4
+        with:
+          path: build/android/third_party
+          key: android-third-party-${{ hashFiles('tools/android_build.py', 'port/android/patches/**') }}
+
+      - uses: actions/cache@v4
+        with:
+          path: build/switch/mesa/install
+          key: switch-mesa-${{ hashFiles('port/switch/mesa/**') }}-${{ env.CI_SWITCH_IMAGE }}
+
+      - name: Release
+        run: python3 tools/ci_build.py switch release
+
+      - name: Compile cache
+        run: ccache --show-stats
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-switch-release
+          path: dist/halo-switch-release
+          retention-days: 3
+
   release:
-    # The eight builds (and the Windows builds' PDBs) as a release, tagged
+    # The nine builds (and the Windows builds' PDBs) as a release, tagged
     # build-<run number> and marked latest
     # (every file keeps its name from release to release, for the README's
     # latest/download links); then all but the newest five build-* releases
     # go, tags and all. Only for main, and only when every platform built.
-    needs: [linux, android, windows, web]
+    needs: [linux, android, windows, web, switch]
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -509,7 +567,7 @@ jobs:
     # without it): green when every platform built, red when one did not,
     # with each platform's result, this run's release (main only), and links
     # to the latest release's builds and the site.
-    needs: [linux, android, windows, web, release, pages]
+    needs: [linux, android, windows, web, switch, release, pages]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -521,6 +579,7 @@ jobs:
           ANDROID: ${{ needs.android.result }}
           WINDOWS: ${{ needs.windows.result }}
           WEB: ${{ needs.web.result }}
+          SWITCH: ${{ needs.switch.result }}
           PAGES: ${{ needs.pages.result }}
           SITE_URL: https://halocombatevolved.com/
           RELEASE_TAG: ${{ needs.release.outputs.tag }}
@@ -545,13 +604,13 @@ jobs:
               *) echo "➖ Skipped" ;;
             esac
           }
-          if [ "$LINUX" = success ] && [ "$ANDROID" = success ] && [ "$WINDOWS" = success ] && [ "$WEB" = success ]; then
+          if [ "$LINUX" = success ] && [ "$ANDROID" = success ] && [ "$WINDOWS" = success ] && [ "$WEB" = success ] && [ "$SWITCH" = success ]; then
             title="Build succeeded"; color=5763719
           else
             title="Build failed"; color=15548997
           fi
           latest="$SERVER/$REPOSITORY/releases/latest"
-          downloads="[Linux]($latest/download/halo-linux-release.zip) · [Windows]($latest/download/halo-windows-release.zip) · [Android]($latest/download/halo-android-release.zip) · [Web]($SITE_URL) ([all builds]($latest))"
+          downloads="[Linux]($latest/download/halo-linux-release.zip) · [Windows]($latest/download/halo-windows-release.zip) · [Android]($latest/download/halo-android-release.zip) · [Web]($SITE_URL) · [Switch]($latest/download/halo-switch-release.zip) ([all builds]($latest))"
           if [ -n "$RELEASE_TAG" ]; then
             release="[$RELEASE_TAG]($SERVER/$REPOSITORY/releases/tag/$RELEASE_TAG)"
             if [ "$PAGES" = success ]; then
@@ -566,7 +625,7 @@ jobs:
             --arg description "[\`${SHA:0:7}\`]($COMMIT_URL) $subject — $ACTOR ($BRANCH)" \
             --arg release "$release" --arg downloads "$downloads" \
             --arg linux "$(status "$LINUX")" --arg windows "$(status "$WINDOWS")" --arg android "$(status "$ANDROID")" \
-            --arg web "$(status "$WEB")" \
+            --arg web "$(status "$WEB")" --arg switch "$(status "$SWITCH")" \
             --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{embeds: [{
               title: $title, url: $url, color: $color, description: $description, timestamp: $timestamp,
@@ -575,6 +634,7 @@ jobs:
                 {name: "Windows", value: $windows, inline: true},
                 {name: "Android", value: $android, inline: true},
                 {name: "Web", value: $web, inline: true},
+                {name: "Switch", value: $switch, inline: true},
                 {name: "Release", value: $release},
                 {name: "Latest release builds", value: $downloads}
               ]

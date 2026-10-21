@@ -41,6 +41,15 @@ bash port/switch/mesa/build_mesa.sh    # Mesa with its GL thread and shader cach
 make -C port/switch/host        # build/switch/opence.nro
 ```
 
+The workflow (`.github/workflows/build.yml`, job `switch`) builds it as
+`tools/ci_build.py` does, with devkitPro's Docker image in place of an
+installed devkitPro, into `dist/halo-switch-release` with the licences of
+what the NRO carries (`port/switch/licenses/README.md`):
+
+```sh
+CI_SWITCH_IMAGE=devkitpro/devkita64 python tools/ci_build.py switch release
+```
+
 ## Run
 
 1. Copy `build/switch/opence.nro` to `sdmc:/switch/opence/`.

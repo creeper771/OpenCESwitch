@@ -69,4 +69,6 @@ rm -rf "$OUT/build" "$OUT/install"
 (cd "$SRC" && "$DEVKITPRO/meson-cross.sh" switch "$OUT/crossfile.txt" "$OUT/build" -Db_ndebug=true)
 ninja -C "$OUT/build"
 DESTDIR="$OUT/install" ninja -C "$OUT/build" install
+# (its licence, for the NRO's notices: tools/ci_build.py)
+cp "$SRC/docs/license.html" "$OUT/install/mesa-license.html"
 echo "Mesa installed under $OUT/install$DEVKITPRO/portlibs/switch"
