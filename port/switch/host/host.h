@@ -113,6 +113,7 @@ int host_sdl_gl_make_current(uint32_t window, uint32_t context);
 int host_sdl_gl_set_swap_interval(int interval);
 int host_sdl_gl_swap_window(uint32_t window);
 int host_sdl_show_simple_message_box(uint32_t flags, const char *title, const char *message);
+int host_sdl_show_toast(const char *message, int duration, int gravity, int x, int y);
 int host_sdl_show_message_box(uint32_t flags, const char *title, const char *message, int default_index,
 	const char *button0, const char *button1, const char *button2);
 void host_gl_get_string(uint32_t name, int index, char *buffer, uint32_t size);

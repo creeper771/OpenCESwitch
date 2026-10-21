@@ -420,6 +420,18 @@ int host_sdl_show_message_box(uint32_t flags, const char *title, const char *mes
 	return default_index;
 }
 
+/* a passing note for the player (the invite link copied or joined:
+port/linux/src/sdl_platform.c): the log, as there is no toast */
+int host_sdl_show_toast(const char *message, int duration, int gravity, int x, int y)
+{
+	(void)duration;
+	(void)gravity;
+	(void)x;
+	(void)y;
+	host_logf(HOST_LOG_INFO, "note: %s", message ? message : "");
+	return 1;
+}
+
 /* ---------- as the Android host's */
 
 void host_gl_get_string(uint32_t name, int index, char *buffer, uint32_t size)

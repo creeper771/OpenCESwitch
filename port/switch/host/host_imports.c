@@ -125,6 +125,7 @@ static const struct host_import implemented[] =
 	{"host_sdl_gl_swap_window", (void *)host_sdl_gl_swap_window},
 	{"host_sdl_show_simple_message_box", (void *)host_sdl_show_simple_message_box},
 	{"host_sdl_show_message_box", (void *)host_sdl_show_message_box},
+	{"host_sdl_show_toast", (void *)host_sdl_show_toast},
 	{"host_gl_get_string", (void *)host_gl_get_string},
 	{"host_gl_has_extension", (void *)host_gl_has_extension},
 	{"host_gl_read_buffer", (void *)host_gl_read_buffer},
