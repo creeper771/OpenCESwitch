@@ -408,7 +408,7 @@ int main(int argc, char **argv)
 	freopen(HOST_STDERR_PATH, "w", stderr);
 	/* (a line at a time: the process ends without flushing it) */
 	setvbuf(stderr, NULL, _IOLBF, 0);
-	host_logf(HOST_LOG_INFO, "OpenCE for the Switch (bring-up host)");
+	host_logf(HOST_LOG_INFO, "OpenCE for the Switch, %s", HOST_VERSION);
 
 	type = appletGetAppletType();
 	if (type != AppletType_Application && type != AppletType_SystemApplication)

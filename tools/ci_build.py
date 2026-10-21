@@ -86,7 +86,13 @@ def build_switch_host() -> None:
     script = ("apt-get update -q && apt-get install -y -q --no-install-recommends meson bison flex python3-mako"
               " >/dev/null && " + f"bash -c '{SWITCH_HOST_BUILD}'; status=$?; "
               f"chown -R {os.getuid()}:{os.getgid()} build/switch; exit $status")
-    run(["docker", "run", "--rm", "-v", f"{ROOT}:/work", "-w", "/work", image, "bash", "-c", script])
+    # (the build's version, which the container's git cannot read: the
+    # checkout belongs to another user)
+    version = (f"build-{os.environ['HALO_BUILD_NUMBER']}" if os.environ.get("HALO_BUILD_NUMBER") else
+               subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
+                              text=True).stdout.strip() or "dev")
+    run(["docker", "run", "--rm", "-v", f"{ROOT}:/work", "-w", "/work", "-e", f"SWITCH_VERSION={version}",
+         image, "bash", "-c", script])
 
 
 def main() -> int:

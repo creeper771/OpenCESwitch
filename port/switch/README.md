@@ -1,4 +1,4 @@
-# Nintendo Switch (in progress)
+# Nintendo Switch
 
 A native homebrew build for a Switch running Atmosphère: an NRO that runs
 the Android port's game image (the game compiled for ILP32 AArch64,

@@ -19,6 +19,9 @@ MESA    := $(OUT)/mesa/install$(DEVKITPRO)/portlibs/switch
 MESA_FLAGS := $(if $(wildcard $(MESA)/lib/libEGL.a),-I$(MESA)/include,)
 MESA_LIBS := $(if $(wildcard $(MESA)/lib/libEGL.a),-L$(MESA)/lib,)
 TOOLS   := $(DEVKITPRO)/tools/bin
+# the version the homebrew menu and the log show: the workflow's build-<n>
+# for a build of main (its release's), else the commit's
+SWITCH_VERSION ?= $(if $(HALO_BUILD_NUMBER),build-$(HALO_BUILD_NUMBER),$(or $(shell git -C $(ROOT) rev-parse --short HEAD 2>/dev/null),dev))
 CC      := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-gcc
 # (the link is C++'s: Mesa's shader compiler needs its runtime)
 CXX     := $(DEVKITPRO)/devkitA64/bin/aarch64-none-elf-g++
@@ -65,12 +68,20 @@ $(OUT)/obj/posix_dtls.o: CFLAGS += -I$(ROOT)/port/linux/src
 $(addprefix $(OUT)/obj/,$(MBEDTLS_SOURCES:.c=.o)): FIRST_FLAGS := $(MBEDTLS_FLAGS)
 $(addprefix $(OUT)/obj/,$(MBEDTLS_SOURCES:.c=.o)): CFLAGS += -w
 
-.PHONY: all clean
+.PHONY: all clean FORCE
 
 all: $(OUT)/opence.nro
 
 $(OUT)/obj $(OUT)/romfs:
 	mkdir -p $@
+
+# (rewritten only when the version changes, so that nothing else is built
+# again)
+$(OUT)/version.txt: FORCE | $(OUT)/obj
+	@echo '$(SWITCH_VERSION)' | cmp -s - $@ || echo '$(SWITCH_VERSION)' > $@
+
+$(OUT)/obj/host_main.o: $(OUT)/version.txt
+$(OUT)/obj/host_main.o: CFLAGS += -DHOST_VERSION='"$(SWITCH_VERSION)"'
 
 $(OUT)/obj/%.o: %.c host.h host_posix.h | $(OUT)/obj
 	$(CC) $(FIRST_FLAGS) $(CFLAGS) -c $< -o $@
@@ -92,11 +103,13 @@ $(OUT)/romfs/halo_guest.elf: $(GUEST) | $(OUT)/romfs
 $(OUT)/romfs/brokers.txt: $(ROOT)/port/assets/network/brokers.txt | $(OUT)/romfs
 	cp $< $@
 
-$(OUT)/opence.nacp:
-	$(TOOLS)/nacptool --create "OpenCE" "OpenCE" "0.1.0" $@
+$(OUT)/opence.nacp: $(OUT)/version.txt
+	$(TOOLS)/nacptool --create "OpenCE" "OpenCE" "$(SWITCH_VERSION)" $@
 
-$(OUT)/opence.nro: $(OUT)/opence.elf $(OUT)/opence.nacp $(OUT)/romfs/halo_guest.elf $(OUT)/romfs/brokers.txt
-	$(TOOLS)/elf2nro $< $@ --nacp=$(OUT)/opence.nacp --icon=$(LIBNX)/default_icon.jpg --romfsdir=$(OUT)/romfs
+# (the game's icon, port/assets/icon/opence-icon-256.png, as the JPEG an NRO
+# carries)
+$(OUT)/opence.nro: $(OUT)/opence.elf $(OUT)/opence.nacp icon.jpg $(OUT)/romfs/halo_guest.elf $(OUT)/romfs/brokers.txt
+	$(TOOLS)/elf2nro $< $@ --nacp=$(OUT)/opence.nacp --icon=icon.jpg --romfsdir=$(OUT)/romfs
 
 clean:
 	rm -rf $(OUT)
